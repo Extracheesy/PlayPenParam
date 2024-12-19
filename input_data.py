@@ -27,7 +27,7 @@ symbols_binance = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEU
 symbols = list(set(symbol_meme + symbols + symbols_binance))
 """
 
-multi_treading = False
+multi_treading = True
 my_trading_sim = False
 init_param = False
 

@@ -468,7 +468,6 @@ class IchimokuZemaStrategy:
             self.lst_of_my_result.append(simulator.simulate_trading(Close, Entry, Exit, Entry_short, Exit_short))
 
     def run_backtest(self):
-        print("#################################################################")
         entries_long = self.dct_signals['buy_signal_long'] == 1
         exits_long = self.dct_signals['sell_signal_long'] == 1
 
@@ -534,12 +533,20 @@ class IchimokuZemaStrategy:
         stats_list = []
         for symbol in self.data.columns:
             pf = self.pf[symbol]
-            stats = pf.stats()
+            stats = pf.stats()  # Assuming this returns a dictionary or similar object
+            # Explicitly copy stats to ensure modifications are applied
+            stats = dict(stats)
+            # Add additional fields
             stats['Type'] = "vbt_pro"
             stats['Symbol'] = symbol
             stats['Timeframe'] = self.timeframe
             stats['Trade_Type'] = self.trade_type
             stats['MA_Type'] = self.ma_type
+
+            # Add parameters from self.params
+            if hasattr(self, 'params') and isinstance(self.params, dict):
+                stats.update(self.params)
+
             stats_list.append(stats)
 
         return stats_list + self.get_my_results()
@@ -633,18 +640,18 @@ def save_and_merge_csv(df, directory_path, file_name):
 
     print(f"Data saved to {new_file_path} and merged file created at {merged_file_path}.")
 
-def parallel_execute(input_data):
+def parallel_execute(data, batch_results_folder_path):
     # Create all tasks using a comprehension and itertools.product
     print("computing param combination list...")
     tasks = [
         (
-            input_data["symbols"],
+            data["symbols"],
             timeframe,
-            input_data["start_date"],
-            input_data["end_date"],
+            data["start_date"],
+            data["end_date"],
             trade_type,
             ma_type,
-            input_data["lst_combined"],
+            data["lst_combined"],
             low_offset,
             high_offset,
             zema_len_buy,
@@ -652,35 +659,33 @@ def parallel_execute(input_data):
             ssl_atr_period
         )
         for trade_type, timeframe, ma_type, low_offset, high_offset, zema_len_buy, zema_len_sell, ssl_atr_period in product(
-            input_data["lst_trade_type"],
-            input_data["tf"],
-            input_data["lst_ma_type"],
-            input_data["lst_low_offset"],
-            input_data["lst_high_offset"],
-            input_data["lst_zema_len_buy"],
-            input_data["lst_zema_len_sell"],
-            input_data["lst_ssl_atr_period"]
+            data["lst_trade_type"],
+            data["tf"],
+            data["lst_ma_type"],
+            data["lst_low_offset"],
+            data["lst_high_offset"],
+            data["lst_zema_len_buy"],
+            data["lst_zema_len_sell"],
+            data["lst_ssl_atr_period"]
         )
     ]
-
     random.shuffle(tasks)
 
     max_workers = multiprocessing.cpu_count()
     total_tasks = len(tasks)
-
     lst_tasks = split_list(tasks, 2 * max_workers)
-
     results_list = []
 
     print("nb combination: ", len(tasks))
 
+    lst_tasks = [lst_tasks[0], lst_tasks[1], lst_tasks[2], lst_tasks[3]]
+
     for tasks in lst_tasks:
         batch_results_list = []
         # Execute tasks in parallel
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        # with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        with ProcessPoolExecutor() as executor:
             futures = {executor.submit(run_strategy, *task): task for task in tasks}
-            print("All tasks submitted to run_strategy.")
-
             # Collect results as they complete
             for i, future in enumerate(as_completed(futures), start=1):
                 results = future.result()
@@ -696,8 +701,12 @@ def parallel_execute(input_data):
         # Combine all filtered results into a single DataFrame
         batch_stats_df = pd.DataFrame(batch_filtered_list)
 
-        save_and_merge_csv(batch_stats_df, batch_stats_df, "batch_stats_df")
+        batch_stats_df = batch_stats_df[input_data.desired_columns]
+        batch_stats_df.columns = [col.upper() for col in batch_stats_df.columns]
 
+        batch_stats_df["COMPARE RETURN"] = batch_stats_df["Total Return [%]"] > batch_stats_df["Benchmark Return [%]"]
+
+        save_and_merge_csv(batch_stats_df, batch_results_folder_path, "batch_stats_df")
 
     print(" All processes completed")
     # Identify common keys across all result dictionaries
@@ -708,6 +717,11 @@ def parallel_execute(input_data):
 
     # Combine all filtered results into a single DataFrame
     all_stats_df = pd.DataFrame(filtered_list)
+
+    all_stats_df = all_stats_df[input_data.desired_columns]
+    all_stats_df.columns = [col.upper() for col in all_stats_df.columns]
+
+    all_stats_df["COMPARE RETURN"] = all_stats_df["Total Return [%]"] > all_stats_df["Benchmark Return [%]"]
 
     return all_stats_df
 
@@ -720,18 +734,15 @@ if __name__ == "__main__":
     if not os.path.exists('results'):
         os.makedirs('results')
 
-    # Specify the folder path
-    batch_results_folder_path = "results_batches_vbtpro"
-
     # Check if the folder exists
-    if os.path.exists(batch_results_folder_path):
+    if os.path.exists(input_data.batch_results_folder_path):
         # Clear the folder by deleting its contents
-        shutil.rmtree(batch_results_folder_path)
+        shutil.rmtree(input_data.batch_results_folder_path)
     # Recreate the folder
-    os.makedirs(batch_results_folder_path)
+    os.makedirs(input_data.batch_results_folder_path)
 
     if input_data.multi_treading:
-        input_data = {
+        input_datas = {
             "symbols": input_data.symbols,
             "tf": input_data.tf,
             "start_date": input_data.start_date,
@@ -746,7 +757,7 @@ if __name__ == "__main__":
             "lst_ssl_atr_period": input_data.lst_ssl_atr_period
             }
 
-        all_stats_df = parallel_execute(input_data)
+        all_stats_df = parallel_execute(input_datas, input_data.batch_results_folder_path)
 
     else:
         lst_stats = []
@@ -800,6 +811,7 @@ if __name__ == "__main__":
     stats_csv_path = get_unique_filename(folder_path, "portfolio_stats_summary", ".csv")
 
     # all_stats_df = all_stats_df.iloc[:, ::-1]
+    """
     all_stats_df = all_stats_df[[
         "Symbol",
         "Type",
@@ -814,6 +826,7 @@ if __name__ == "__main__":
         "Sharpe Ratio",
         "Total Trades"
     ]]
+    """
 
     # Save the combined stats to a CSV file
     all_stats_df.to_csv(stats_csv_path, index=False)

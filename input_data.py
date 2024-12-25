@@ -80,3 +80,17 @@ max_lookback_days = max(
 )
 
 extended_start_date = (pd.Timestamp(start_date) - timedelta(days=max_lookback_days)).strftime('%Y-%m-%d')
+
+# Specify the folder path
+batch_results_folder_path = "results_batches_vbtpro"
+
+desired_columns = [
+    "Symbol", "Timeframe", "Type", "MA_Type", "Trade_Type", "Sharpe Ratio",
+    "End Value", "Total Return [%]", "Benchmark Return [%]", "Win Rate [%]", "Total Trades",
+    "Max Drawdown [%]", "Calmar Ratio",
+    "Sortino Ratio", "Total Fees Paid", "Total Orders", "Avg Winning Trade [%]",
+    "Min Value", "Max Value", "Total Duration", "Best Trade [%]",
+    "Profit Factor", "Avg Losing Trade [%]", "Worst Trade [%]", "Omega Ratio",
+    "Expectancy", "high_offset", "ichimoku_params", "low_offset",
+    "zema_len_buy", "zema_len_sell", "ssl_atr_period"
+]

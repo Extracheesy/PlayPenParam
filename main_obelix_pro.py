@@ -24,6 +24,13 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from itertools import product
+import random
+
+import os
+import shutil
+
 def get_unique_filename(base_path, base_name, extension):
     """
     Generate a unique filename by appending _n to the base name if the file exists.
@@ -577,6 +584,52 @@ def run_strategy(symbols, timeframe, start_date, end_date, trade_type, ma_type, 
                                     )
     return strategy.get_results()
 
+def split_list(lst, n):
+    """Split a list into n sublists."""
+    avg = len(lst) // n
+    remainder = len(lst) % n
+    result = []
+    start = 0
+    for i in range(n):
+        end = start + avg + (1 if i < remainder else 0)
+        result.append(lst[start:end])
+        start = end
+    return result
+
+def save_and_merge_csv(df, directory_path, file_name):
+    """
+    Save a DataFrame to a CSV file and merge all CSVs with the same name in the directory into one file.
+
+    Parameters:
+        df (pd.DataFrame): The DataFrame to save.
+        directory_path (str): The directory path where the CSV will be saved.
+        file_name (str): The name of the CSV file (without extension).
+    """
+    # Ensure the directory exists
+    if not os.path.exists(directory_path):
+        os.makedirs(directory_path)
+
+    # Define the full path for the new CSV file
+    new_file_path = os.path.join(directory_path, f"{file_name}.csv")
+
+    # Save the current DataFrame to the CSV file
+    df.to_csv(new_file_path, index=False)
+
+    # Gather all CSV files with the same name in the directory
+    matching_files = [
+        os.path.join(directory_path, file)
+        for file in os.listdir(directory_path)
+        if file.startswith(file_name) and file.endswith(".csv")
+    ]
+
+    # Merge all matching CSV files into a single DataFrame
+    merged_df = pd.concat(pd.read_csv(file) for file in matching_files)
+
+    # Save the merged DataFrame back to the original file path
+    merged_file_path = os.path.join(directory_path, f"{file_name}_merged.csv")
+    merged_df.to_csv(merged_file_path, index=False)
+
+    print(f"Data saved to {new_file_path} and merged file created at {merged_file_path}.")
 
 def parallel_execute(input_data):
     # Create all tasks using a comprehension and itertools.product
@@ -608,21 +661,41 @@ def parallel_execute(input_data):
         )
     ]
 
+    random.shuffle(tasks)
+
     max_workers = multiprocessing.cpu_count()
     total_tasks = len(tasks)
+
+    lst_tasks = split_list(tasks, 2 * max_workers)
+
     results_list = []
 
     print("nb combination: ", len(tasks))
-    # Execute tasks in parallel
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(run_strategy, *task): task for task in tasks}
-        print("All tasks submitted to run_strategy.")
 
-        # Collect results as they complete
-        for i, future in enumerate(as_completed(futures), start=1):
-            results = future.result()
-            results_list.extend(results)
-            print(f"Completed {i}/{total_tasks} tasks")
+    for tasks in lst_tasks:
+        batch_results_list = []
+        # Execute tasks in parallel
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(run_strategy, *task): task for task in tasks}
+            print("All tasks submitted to run_strategy.")
+
+            # Collect results as they complete
+            for i, future in enumerate(as_completed(futures), start=1):
+                results = future.result()
+                results_list.extend(results)
+                batch_results_list.extend(results)
+                print(f"Completed {i}/{total_tasks} tasks")
+
+        print(" Batch processes completed")
+        # Identify common keys across all result dictionaries
+        batch_common_keys = set.intersection(*(set(d.keys()) for d in batch_results_list))
+        # Filter each result dict to include only the common keys
+        batch_filtered_list = [{k: d[k] for k in batch_common_keys} for d in batch_results_list]
+        # Combine all filtered results into a single DataFrame
+        batch_stats_df = pd.DataFrame(batch_filtered_list)
+
+        save_and_merge_csv(batch_stats_df, batch_stats_df, "batch_stats_df")
+
 
     print(" All processes completed")
     # Identify common keys across all result dictionaries
@@ -633,9 +706,8 @@ def parallel_execute(input_data):
 
     # Combine all filtered results into a single DataFrame
     all_stats_df = pd.DataFrame(filtered_list)
+
     return all_stats_df
-
-
 
 if __name__ == "__main__":
     results = {}
@@ -645,6 +717,16 @@ if __name__ == "__main__":
     # Ensure the results directory exists
     if not os.path.exists('results'):
         os.makedirs('results')
+
+    # Specify the folder path
+    batch_results_folder_path = "results_batches_vbtpro"
+
+    # Check if the folder exists
+    if os.path.exists(batch_results_folder_path):
+        # Clear the folder by deleting its contents
+        shutil.rmtree(batch_results_folder_path)
+    # Recreate the folder
+    os.makedirs(batch_results_folder_path)
 
     if input_data.multi_treading:
         input_data = {

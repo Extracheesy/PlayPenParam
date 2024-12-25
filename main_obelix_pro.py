@@ -678,8 +678,6 @@ def parallel_execute(data, batch_results_folder_path):
 
     print("nb combination: ", len(tasks))
 
-    lst_tasks = [lst_tasks[0], lst_tasks[1], lst_tasks[2], lst_tasks[3]]
-
     for tasks in lst_tasks:
         batch_results_list = []
         # Execute tasks in parallel
@@ -704,7 +702,7 @@ def parallel_execute(data, batch_results_folder_path):
         batch_stats_df = batch_stats_df[input_data.desired_columns]
         batch_stats_df.columns = [col.upper() for col in batch_stats_df.columns]
 
-        batch_stats_df["COMPARE RETURN"] = batch_stats_df["Total Return [%]"] > batch_stats_df["Benchmark Return [%]"]
+        batch_stats_df["COMPARE RETURN"] = batch_stats_df["Total Return [%]".upper()] > batch_stats_df["Benchmark Return [%]".upper()]
 
         save_and_merge_csv(batch_stats_df, batch_results_folder_path, "batch_stats_df")
 
@@ -721,7 +719,7 @@ def parallel_execute(data, batch_results_folder_path):
     all_stats_df = all_stats_df[input_data.desired_columns]
     all_stats_df.columns = [col.upper() for col in all_stats_df.columns]
 
-    all_stats_df["COMPARE RETURN"] = all_stats_df["Total Return [%]"] > all_stats_df["Benchmark Return [%]"]
+    all_stats_df["COMPARE RETURN"] = all_stats_df["Total Return [%]".upper()] > all_stats_df["Benchmark Return [%]".upper()]
 
     return all_stats_df
 

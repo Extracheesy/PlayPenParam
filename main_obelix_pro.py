@@ -584,17 +584,19 @@ def run_strategy(symbols, timeframe, start_date, end_date, trade_type, ma_type, 
                                     )
     return strategy.get_results()
 
+
 def split_list(lst, n):
-    """Split a list into n sublists."""
-    avg = len(lst) // n
-    remainder = len(lst) % n
-    result = []
-    start = 0
-    for i in range(n):
-        end = start + avg + (1 if i < remainder else 0)
-        result.append(lst[start:end])
-        start = end
-    return result
+    """
+    Split a list into sublists, each with a maximum length of n.
+
+    Parameters:
+        lst (list): The list to split.
+        n (int): The maximum length of each sublist.
+
+    Returns:
+        list: A list of sublists.
+    """
+    return [lst[i:i + n] for i in range(0, len(lst), n)]
 
 def save_and_merge_csv(df, directory_path, file_name):
     """

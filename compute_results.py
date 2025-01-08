@@ -3,57 +3,55 @@ import pandas as pd
 import numpy as np
 
 # Scikit-Optimize
-# If you don't have it installed:
-# !pip install scikit-optimize
-
+# pip install scikit-optimize if not installed
 from skopt import gp_minimize
 from skopt.space import Categorical, Integer, Real
-from skopt.utils import use_named_args
-
-# For K-Fold cross-validation splits
 from sklearn.model_selection import KFold
 
 ###############################################################################
-# 1) LOAD CSV AND DROP UNUSED COLUMNS
+# 1) READ CSV & DROP UNUSED
 ###############################################################################
-
 path = "./batch_stats_df_merged"
-input_csv_filename = "output_batch_stats_df_merged.csv"  # Replace with your actual input file if needed
-
-# Construct full path
+input_csv_filename = "output_batch_stats_df_merged.csv"
 input_csv = os.path.join(path, input_csv_filename)
 
-df = pd.read_csv(input_csv)  # <-- Now reading from the constructed path
+df = pd.read_csv(input_csv)
 
-unused_cols = ["TYPE", "TRADE_TYPE", "TOTAL FEES PAID", "TOTAL ORDERS", "TOTAL DURATION"]
+# Drop only what you truly don't need. Keep TOTAL ORDERS, TOTAL DURATION,
+# since we want them in the final output.
+unused_cols = [
+    "TYPE",
+    "TRADE_TYPE",
+    "TOTAL FEES PAID",
+    "ICHIMOKU_PARAMS"
+]
 for c in unused_cols:
     if c in df.columns:
         df.drop(columns=[c], inplace=True)
 
-# Check for required grouping columns
-for col in ["SYMBOL", "TIMEFRAME", "MA_TYPE"]:
-    if col not in df.columns:
-        raise ValueError(f"Missing required column '{col}' in CSV!")
-
-# Parameter columns you want to optimize
-param_cols = ["HIGH_OFFSET", "LOW_OFFSET", "ZEMA_LEN_BUY", "ZEMA_LEN_SELL", "SSL_ATR_PERIOD"]
-for col in param_cols:
-    if col not in df.columns:
-        raise ValueError(f"Missing parameter column '{col}' in CSV!")
-
 ###############################################################################
-# 2) DEFINE METRICS & THEIR WEIGHTS (THREE PRIORITY TIERS)
+# 2) DEFINE THE METRICS AND THEIR PRIORITIES FOR THE COMPOSITE SCORE
 ###############################################################################
-
-priority_1 = ["COMPARE RETURN"]
+# Example priority tiers (adjust to your real metric names and weighting):
+priority_1 = ["COMPARE RETURN"]  # highest weight
 priority_2 = ["SHARPE RATIO", "TOTAL RETURN [%]", "WIN RATE [%]", "TOTAL TRADES", "MAX DRAWDOWN [%]"]
 priority_3 = [
-    "CALMAR RATIO", "SORTINO RATIO", "AVG WINNING TRADE [%]", "MIN VALUE", "MAX VALUE",
-    "BEST TRADE [%]", "PROFIT FACTOR", "AVG LOSING TRADE [%]", "WORST TRADE [%]",
-    "OMEGA RATIO", "EXPECTANCY"
+    "CALMAR RATIO",
+    "SORTINO RATIO",
+    "AVG WINNING TRADE [%]",
+    "MIN VALUE",
+    "MAX VALUE",
+    "BEST TRADE [%]",
+    "PROFIT FACTOR",
+    "AVG LOSING TRADE [%]",
+    "WORST TRADE [%]",
+    "OMEGA RATIO",
+    "EXPECTANCY"
 ]
+
 all_metrics = priority_1 + priority_2 + priority_3
 
+# Assign numeric weights
 weight_map = {}
 for m in priority_1:
     weight_map[m] = 3.0
@@ -62,7 +60,7 @@ for m in priority_2:
 for m in priority_3:
     weight_map[m] = 1.0
 
-# Ensure these columns exist & are numeric
+# Convert these metrics to numeric and drop rows with missing values in them
 for m in all_metrics:
     if m not in df.columns:
         raise ValueError(f"Missing metric column '{m}' in your CSV!")
@@ -73,140 +71,196 @@ df.dropna(subset=all_metrics, inplace=True)
 ###############################################################################
 # 3) COMPOSITE SCORE FUNCTION
 ###############################################################################
-# - We'll do a direct weighted sum,
-# - We'll invert "MAX DRAWDOWN [%]" so that a smaller drawdown => higher score.
-
 def row_composite_score(row):
+    """
+    Weighted sum of your priority metrics.
+    We'll invert 'MAX DRAWDOWN [%]' so smaller => higher contribution.
+    Adjust if you have other "smaller is better" metrics.
+    """
     score = 0.0
     for metric in all_metrics:
-        w = weight_map[metric]
         val = row[metric]
+        w = weight_map[metric]
         if metric == "MAX DRAWDOWN [%]":
-            # invert so smaller drawdown => higher contribution
-            val = -val
+            val = -val  # invert drawdown
         score += w * val
     return score
 
 ###############################################################################
-# 4) K-FOLD SCORING FUNCTION (instead of walk-forward)
+# 4) K-FOLD SCORING
 ###############################################################################
-def kfold_score(group, params, n_splits=4):
+def kfold_score(group_df, params, n_splits=4):
     """
-    Perform K-fold cross-validation in the group.
-    For each fold, we treat the test fold as "out-of-sample" for these parameters.
-
-    Steps:
-    1. Split the rows of the group into K folds.
-    2. For each fold, filter rows that match `params` exactly.
-    3. Compute the average composite score in the test data.
-    4. Collect these scores and average them.
-
-    Return that average (larger is better).
-    If no rows match the param set in some test fold, we penalize heavily.
+    1. Split group_df into K folds.
+    2. For each test fold, filter rows by the proposed param values.
+    3. Compute average row_composite_score(...) for that fold.
+    4. Return mean across folds. If no rows match => -999999 penalty.
     """
-    g = group.reset_index(drop=True)
-    n = len(g)
-    if n < n_splits:
-        # Not enough data => big penalty
+    g = group_df.reset_index(drop=True)
+    if len(g) < n_splits:
         return -999999
 
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
     scores = []
 
-    for train_idx, test_idx in kf.split(g):
+    for _, test_idx in kf.split(g):
         test_data = g.iloc[test_idx].copy()
-
-        # Filter test_data to rows that match 'params'
-        for param_col, param_val in params.items():
-            test_data = test_data.loc[test_data[param_col] == param_val]
+        for key, val in params.items():
+            test_data = test_data.loc[test_data[key] == val]
 
         if test_data.empty:
             scores.append(-999999)
         else:
-            comp_scores = test_data.apply(row_composite_score, axis=1)
-            scores.append(comp_scores.mean())
+            fold_score = test_data.apply(row_composite_score, axis=1).mean()
+            scores.append(fold_score)
 
     return np.mean(scores)
 
 ###############################################################################
-# 5) OBJECTIVE FUNCTION FOR GP_MINIMIZE
+# 5) MAKE OBJECTIVE FUNCTION (No Decorator)
 ###############################################################################
-def make_objective_fn(group, n_splits=4):
+def make_objective_fn(group_df, param_cols, n_splits=4):
     """
-    Build a closure that scikit-optimize will call with param values.
-    We'll do K-fold scoring, then return negative to maximize our composite.
+    Return a function that gp_minimize calls with x (list of param values).
+    We convert x -> param_dict -> feed to kfold_score -> return negative.
     """
+    def objective_fn(x):
+        param_dict = {}
+        for i, col in enumerate(param_cols):
+            param_dict[col] = x[i]
 
-    @use_named_args(dimensions=[])
-    def objective_fn(**params):
-        avg_score = kfold_score(group, params, n_splits=n_splits)
+        avg_score = kfold_score(group_df, param_dict, n_splits=n_splits)
         return -avg_score  # negative => we want to maximize
-
     return objective_fn
 
 ###############################################################################
-# 6) BUILD PARAM SPACE
+# 6) OPTIMIZE FOR ONE GROUP
 ###############################################################################
-def build_param_space_for_group(group_df, param_cols):
+def optimize_for_group(group_df, param_cols):
+    """
+    1) Build 'dims' for each param col (discrete or numeric).
+    2) Make objective_fn => gp_minimize => best param combo.
+    3) Return best_score, best_params.
+    """
     dims = []
     for col in param_cols:
-        uniques = group_df[col].unique()
-        # if fewer than 20 unique => treat as discrete
-        # else we assume numeric range
+        uniques = sorted(group_df[col].unique())
         if len(uniques) < 20:
-            sorted_vals = sorted(uniques)
-            dims.append(Categorical(sorted_vals, name=col))
+            dims.append(Categorical(uniques, name=col))
         else:
-            col_min, col_max = group_df[col].min(), group_df[col].max()
-            if np.allclose(uniques, uniques.astype(int)):
+            col_min, col_max = min(uniques), max(uniques)
+            if np.allclose(uniques, np.round(uniques)):
                 dims.append(Integer(int(col_min), int(col_max), name=col))
             else:
                 dims.append(Real(float(col_min), float(col_max), name=col))
-    return dims
 
-###############################################################################
-# 7) MAIN LOOP OVER (SYMBOL, TIMEFRAME, MA_TYPE)
-###############################################################################
-results = []
-
-grouped = df.groupby(["SYMBOL", "TIMEFRAME", "MA_TYPE"], as_index=False)
-for _, group_data in grouped:
-    sym = group_data["SYMBOL"].iloc[0]
-    tf = group_data["TIMEFRAME"].iloc[0]
-    ma_t = group_data["MA_TYPE"].iloc[0]
-
-    dims = build_param_space_for_group(group_data, param_cols)
-    objective_fn = make_objective_fn(group_data, n_splits=4)
-    objective_fn.__skopt_dimensions__ = dims  # Attach dimension info
+    objective_fn = make_objective_fn(group_df, param_cols, n_splits=4)
 
     res = gp_minimize(
         func=objective_fn,
         dimensions=dims,
-        n_calls=30,         # adjust as needed
-        n_random_starts=5,  # random exploration
+        n_calls=30,
+        n_random_starts=5,
         random_state=42
     )
 
     best_loss = res.fun
     best_score = -best_loss
-    best_params = res.x
+    best_values = res.x
 
-    param_dict = {}
-    for dim, val in zip(dims, best_params):
-        param_dict[dim.name] = val
+    best_params = {}
+    for i, dim in enumerate(dims):
+        best_params[dim.name] = best_values[i]
 
-    row = {
-        "SYMBOL": sym,
-        "TIMEFRAME": tf,
-        "MA_TYPE": ma_t,
-        "best_score": best_score
-    }
-    row.update(param_dict)
-    results.append(row)
+    return best_score, best_params
 
-results_df = pd.DataFrame(results)
-print("\n=== BEST PARAMS PER (SYMBOL, TIMEFRAME, MA_TYPE) ===")
-print(results_df)
+###############################################################################
+# 7) MAIN: GROUP-BY => BEST PARAMS, THEN CAPTURE MORE COLUMNS
+###############################################################################
+if __name__ == "__main__":
+    # The param columns to optimize
+    param_cols = [
+        "HIGH_OFFSET",
+        "LOW_OFFSET",
+        "ZEMA_LEN_BUY",
+        "ZEMA_LEN_SELL",
+        "SSL_ATR_PERIOD"
+    ]
 
-# Save to CSV
-results_df.to_csv("best_params_kfold.csv", index=False)
+    ###########################################################################
+    # The user wants the following columns in final output:
+    # (make sure they exist in your CSV):
+    ###########################################################################
+    additional_cols = [
+        "SHARPE RATIO",
+        "END VALUE",
+        "TOTAL RETURN [%]",
+        "BENCHMARK RETURN [%]",
+        "WIN RATE [%]",
+        "TOTAL TRADES",
+        "MAX DRAWDOWN [%]",
+        "CALMAR RATIO",
+        "SORTINO RATIO",
+        "TOTAL ORDERS",
+        "AVG WINNING TRADE [%]",
+        "MIN VALUE",
+        "MAX VALUE",
+        "TOTAL DURATION",
+        "BEST TRADE [%]",
+        "PROFIT FACTOR",
+        "AVG LOSING TRADE [%]",
+        "WORST TRADE [%]",
+        "OMEGA RATIO",
+        "EXPECTANCY",
+        "COMPARE RETURN"
+    ]
+
+    # Convert them to numeric if possible (some might be int, float, etc.)
+    for c in additional_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    results = []
+    grouped = df.groupby(["SYMBOL", "TIMEFRAME", "MA_TYPE"], as_index=False)
+
+    for _, group_data in grouped:
+        sym = group_data["SYMBOL"].iloc[0]
+        tf = group_data["TIMEFRAME"].iloc[0]
+        ma_t = group_data["MA_TYPE"].iloc[0]
+
+        best_score, best_params = optimize_for_group(group_data, param_cols)
+
+        # Now, find the matching rows in group_data for the best param combo
+        matching_data = group_data.copy()
+        for pcol, pval in best_params.items():
+            matching_data = matching_data.loc[matching_data[pcol] == pval]
+
+        # Build the output row
+        row = {
+            "SYMBOL": sym,
+            "TIMEFRAME": tf,
+            "MA_TYPE": ma_t,
+            "best_score": best_score
+        }
+        row.update(best_params)
+
+        if matching_data.empty:
+            # No exact match => store NaN
+            for c in additional_cols:
+                row[c] = np.nan
+        else:
+            # For each additional col, store the mean (or any other stat you prefer)
+            for c in additional_cols:
+                if c in matching_data.columns:
+                    row[c] = matching_data[c].mean()
+                else:
+                    row[c] = np.nan
+
+        results.append(row)
+
+    results_df = pd.DataFrame(results)
+    print("\n=== BEST PARAMS PER (SYMBOL, TIMEFRAME, MA_TYPE) ===")
+    print(results_df)
+
+    # Save to CSV
+    results_df.to_csv("best_params_per_group.csv", index=False)

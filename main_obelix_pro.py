@@ -732,12 +732,13 @@ if __name__ == "__main__":
     if not os.path.exists('results'):
         os.makedirs('results')
 
-    # Check if the folder exists
-    if os.path.exists(input_data.batch_results_folder_path):
-        # Clear the folder by deleting its contents
-        shutil.rmtree(input_data.batch_results_folder_path)
-    # Recreate the folder
-    os.makedirs(input_data.batch_results_folder_path)
+    if False:
+        # Check if the folder exists
+        if os.path.exists(input_data.batch_results_folder_path):
+            # Clear the folder by deleting its contents
+            shutil.rmtree(input_data.batch_results_folder_path)
+        # Recreate the folder
+        os.makedirs(input_data.batch_results_folder_path)
 
     if input_data.multi_treading:
         input_datas = {

@@ -671,6 +671,70 @@ def parallel_execute(data, batch_results_folder_path):
     ]
     random.shuffle(tasks)
 
+    # --------------------------------------------------
+    # 2) Load df_pre_computed_results from CSV
+    # --------------------------------------------------
+    df_pre_computed_results = pd.read_csv("./input_batches_vbtpro/batch_stats_df_merged.csv")
+
+    # --------------------------------------------------
+    # 3) Identify columns that define a "combination"
+    #    BUT we EXCLUDE 'SYMBOL' from the comparison.
+    # --------------------------------------------------
+    combo_cols = [
+        "TIMEFRAME",
+        "MA_TYPE",
+        "TRADE_TYPE",
+        "LOW_OFFSET",
+        "HIGH_OFFSET",
+        "ZEMA_LEN_BUY",
+        "ZEMA_LEN_SELL",
+        "SSL_ATR_PERIOD"
+    ]
+
+    # Drop duplicates so each combination is unique
+    df_unique_combos = df_pre_computed_results[combo_cols].drop_duplicates()
+
+    # Convert each row to a tuple & build a set for quick membership checks
+    existing_combos = set(tuple(row) for row in df_unique_combos.values)
+
+    # --------------------------------------------------
+    # 4) Filter tasks so any *parameter combo* (ignoring symbol) already present is dropped
+    # --------------------------------------------------
+    filtered_tasks = []
+    for task in tasks:
+        (
+            symbols,
+            timeframe,
+            start_date,
+            end_date,
+            trade_type,
+            ma_type,
+            _lst_combined,
+            low_offset,
+            high_offset,
+            zema_len_buy,
+            zema_len_sell,
+            ssl_atr_period
+        ) = task
+
+        # Create a "combo" that excludes symbols
+        combo = (
+            timeframe,
+            ma_type,
+            trade_type,
+            low_offset,
+            high_offset,
+            zema_len_buy,
+            zema_len_sell,
+            ssl_atr_period
+        )
+
+        # Keep this task only if we do NOT already have the combo
+        if combo not in existing_combos:
+            filtered_tasks.append(task)
+
+    tasks = filtered_tasks  # reassign the filtered list
+
     max_workers = multiprocessing.cpu_count()
     total_tasks = len(tasks)
     lst_tasks = split_list(tasks, 2 * max_workers)

@@ -7,6 +7,8 @@ import hashlib
 import numpy as np
 import pandas as pd
 
+from filelock import FileLock
+
 class DataLoaderVBT:
     def __init__(self, start_date, end_date, path):
         self.start_date = start_date
@@ -51,20 +53,43 @@ class DataLoaderVBT:
         # Generate the filename with the hash
         filename = os.path.join(self.path, f"{symbols_hash}_{timeframe_str}_{start_date_str}_{end_date_str}.h5")
 
+        # Ensure the output directory exists
+        output_dir = 'data_pro'
+        os.makedirs(output_dir, exist_ok=True)
+
         if os.path.exists(filename):
-            # data = vbt.HDFData.pull(filename)
-            data = vbt.BinanceData.from_hdf(filename)
+            print("Reading data from:", filename)
+            try:
+                lock = FileLock(f"{filename}.lock")
+                with lock:  # Lock for reading
+                    # Attempt to read data from the file
+                    data = vbt.BinanceData.from_hdf(filename)
+            except Exception as e:
+                # Log the exception and fall back to pulling the data
+                print(f"Failed to read data from {filename}, pulling new data. Error: {e}")
+                data = vbt.BinanceData.pull(
+                    symbols,
+                    start=self.start_date,
+                    end=self.end_date,
+                    timeframe=tf
+                )
+
+                lock = FileLock(f"{filename}.lock")
+                with lock:  # Lock for reading
+                    # Save the pulled data to the file
+                    data.to_hdf(filename)
         else:
+            print("File not found, pulling data and saving to:", filename)
+            # Pull the data since the file does not exist
             data = vbt.BinanceData.pull(
                 symbols,
                 start=self.start_date,
                 end=self.end_date,
                 timeframe=tf
             )
-
-            if not os.path.exists('data_pro'):
-                os.makedirs('data_pro')
-
-            data.to_hdf(filename)
+            # Save the pulled data to the file
+            lock = FileLock(f"{filename}.lock")
+            with lock:
+                data.to_hdf(filename, mode='w')
 
         return data

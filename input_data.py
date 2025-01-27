@@ -85,7 +85,8 @@ extended_start_date = (pd.Timestamp(start_date) - timedelta(days=max_lookback_da
 batch_results_folder_path = "results_batches_vbtpro"
 
 desired_columns = [
-    "Symbol", "Timeframe", "Type", "MA_Type", "Trade_Type", "Sharpe Ratio",
+    "id", "Symbol", "TREND_INDICATOR",
+    "Timeframe", "Type", "MA_Type", "Trade_Type", "Sharpe Ratio",
     "End Value", "Total Return [%]", "Benchmark Return [%]", "Win Rate [%]", "Total Trades",
     "Max Drawdown [%]", "Calmar Ratio",
     "Sortino Ratio", "Total Fees Paid", "Total Orders", "Avg Winning Trade [%]",

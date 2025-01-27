@@ -23,8 +23,32 @@ def convert_csv_for_excel(input_csv, output_csv):
 
 # Example usage:
 if __name__ == "__main__":
-    input_file = "input.csv"  # Replace with your input file path
-    output_file = "output.csv"  # Replace with your desired output file path
+    # input_file = "./batch_stats_df_merged/batch_stats_df_merged.csv"  # Replace with your input file path
+    # output_file = "./batch_stats_df_merged/batch_stats_df_merged_excel_output.csv"  # Replace with your desired output file path
+
+    # input_file = "./best_params_per_group__2.csv"  # Replace with your input file path
+    # output_file = "./best_params_per_group__2__excel_output.csv"  # Replace with your desired output file path
+
+    # input_file = "./weighted_score/scored_results.csv"  # Replace with your input file path
+    # output_file = "./weighted_score/scored_results_excel_output.csv"  # Replace with your desired output file path
+
+    # input_file = "./weighted_score/merged_obelix_configurations.csv"  # Replace with your input file path
+    # output_file = "./weighted_score/merged_obelix_configurations_output.csv"  # Replace with your desired output file path
+
+    input_file = "./weighted_score/merged_obelix_configurations_with_scores.csv"  # Replace with your input file path
+    output_file = "./weighted_score/merged_obelix_configurations_with_scores_output.csv"  # Replace with your desired output file path
+
+    input_file = "results_vbtpro/portfolio_stats_summary.csv"  # Replace with your input file path
+    output_file = "results_vbtpro/portfolio_stats_summary_exel_output.csv"  # Replace with your desired output file path
+
+    input_file = "./results_vbtpro/scored_results.csv"
+    output_file = "./results_vbtpro/scored_results_exel_output.csv"
+
+    input_file = "./merged_max_kmeans_output/merged_output.csv"
+    output_file = "./merged_max_kmeans_output/merged_output_xcel.csv"
+
+    input_file = "./test_param/portfolio_stats_summary.csv"
+    output_file = "./test_param/portfolio_stats_summary_xcel.csv"
 
     convert_csv_for_excel(input_file, output_file)
     print("CSV has been converted and saved.")

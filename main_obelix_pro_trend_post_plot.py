@@ -22,6 +22,8 @@ from convert_to_xcel import convert_csv_for_excel
 
 from pathlib import Path
 
+import utils
+
 # ============================
 # Utility Functions
 # ============================
@@ -602,7 +604,32 @@ class IchimokuZemaStrategy:
                 except:
                     exit(555)
 
+        # open, high, low, close, volume, buy_adj, sell_adj, ichimoku_valid, trend_pulse, bear_trend_pulse, strategy_returns, buy_signal, sell_signal
+        self.backupt_data = pd.DataFrame()
+        self.backupt_data["open"] = self.data.get("Open")
+        self.backupt_data["high"] = self.data.get("High")
+        self.backupt_data["low"] = self.data.get("Low")
+        self.backupt_data["close"] = self.data.get("Close")
+        self.backupt_data["volume"] = self.data.get("Volume")
 
+        buy_key, sell_key = adj_map[self.ma_type]
+        buy_adj = self.dct_indicators[buy_key]
+        sell_adj = self.dct_indicators[sell_key]
+
+        self.backupt_data["buy_adj"] = buy_adj
+        self.backupt_data["sell_adj"] = sell_adj
+
+        self.backupt_data["ichimoku_valid"] = self.dct_indicators['ichimoku_valid']
+        self.backupt_data["trend_pulse"] = self.dct_indicators['trend_pulse']
+        self.backupt_data["bear_trend_pulse"] = self.dct_indicators['bear_trend_pulse']
+
+        self.backupt_data["buy_signal"] = buy_signal_long
+        self.backupt_data["sell_signal"] = sell_signal_long
+
+        self.backupt_data = self.backupt_data.set_index(self.data.index)
+
+        saved_path = utils.save_dataframe(self.backupt_data, "output_data", "backupt_data", "csv")
+        print(f"DataFrame saved at: {saved_path}")
 
         # Store signals
         self.dct_signals = {
@@ -623,6 +650,9 @@ class IchimokuZemaStrategy:
             Exit = self.dct_signals['sell_signal_long'][symbol]
             Entry_short = self.dct_signals['buy_signal_short'][symbol]
             Exit_short = self.dct_signals['sell_signal_short'][symbol]
+
+
+
 
             simulator = TradingSimulator(
                 symbol=symbol,
@@ -795,7 +825,7 @@ def parallel_execute(scored_results_path, data, batch_results_folder_path):
         sys.exit(1)  # Exit with an error code
 
     lock = threading.Lock()
-    if False:
+    if True:
         df = read_csv_thread_safe(scored_results_path, lock)
     else:
         df = pd.read_csv(scored_results_path)
@@ -806,7 +836,8 @@ def parallel_execute(scored_results_path, data, batch_results_folder_path):
         df["TREND_INDICATOR"] = "ICHIMOKU_INIT"
         df.to_csv(scored_results_path)
 
-    df["TREND_INDICATOR"] = "PRICE_ACTION"
+    # df["TREND_INDICATOR"] = "PRICE_ACTION"
+    df["TREND_INDICATOR"] = "ICHIMOKU_INIT"
 
     # Convert columns where necessary
     cols_to_float = ["LOW_OFFSET", "HIGH_OFFSET"]
@@ -913,6 +944,7 @@ if __name__ == "__main__":
         folder_path = input_directory
         scored_results_path = os.path.join(input_directory, 'merged_output.csv')
         scored_results_path = os.path.join(input_directory, 'merged_output - Copie.csv')
+        scored_results_path = os.path.join(input_directory, 'file_for_test.csv')
 
 
         # scored_results_path = os.path.join(input_directory, 'merged_output - Copie.csv')

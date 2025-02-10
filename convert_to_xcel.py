@@ -50,5 +50,8 @@ if __name__ == "__main__":
     input_file = "./test_param/portfolio_stats_summary.csv"
     output_file = "./test_param/portfolio_stats_summary_xcel.csv"
 
+    input_file = "./results_batches_vbtpro/batch_stats_df_merged.csv"
+    output_file = "./results_batches_vbtpro/batch_stats_df_merged_xcel.csv"
+
     convert_csv_for_excel(input_file, output_file)
     print("CSV has been converted and saved.")

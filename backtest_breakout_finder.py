@@ -21,6 +21,9 @@ import utils
 import concurrent.futures
 import vectorbtpro as vbt
 
+import warnings
+warnings.filterwarnings("ignore")
+
 def ichimoku(data, params):
     """
     Computes Ichimoku indicator components (Tenkan-sen, Kijun-sen, Senkou spans,
@@ -921,6 +924,8 @@ class CryptoBacktest:
         self.stat_metrics['M_BEST_TRADE'] = f"{best_trade:.2%}"
         self.stat_metrics['M_WORST_TRADE'] = f"{worst_trade:.2%}"
 
+        self.trade_pnls = trade_pnls
+
     def get_metrics(self):
         return self.stats | self.stat_metrics | self.dct_pf_stats
 
@@ -937,7 +942,8 @@ class CryptoBacktest:
             saved_path = utils.save_dataframe(self.data, "output_data", "data_backtest", "csv")
             print(f"DataFrame saved at: {saved_path}")
 
-    def plot_pnl(self, trade_pnls):
+    def plot_pnl(self):
+        trade_pnls = self.trade_pnls
         plt.figure(figsize=(12, 5))
         trade_indices = range(len(trade_pnls))
         colors = ['green' if pnl > 0 else 'red' for pnl in trade_pnls]
@@ -998,7 +1004,7 @@ class CryptoBacktest:
                 plt.show()
             print(f"Graph saved at {save_path_signals}")
 
-    def get_frequency(self):
+    def __get_frequency(self):
         inferred_freq = pd.infer_freq(self.data.index)
 
         # Convert inferred frequency to your mapping keys
@@ -1012,6 +1018,15 @@ class CryptoBacktest:
         }
 
         self.timeframe = frequency_conversion.get(inferred_freq, None)
+        return self.timeframe
+
+    # Example usage in your class or function:
+    def get_frequency(self):
+        timeframe = self.__get_frequency()
+        if timeframe == None:
+            self.timeframe = utils.infer_timeframe(self.data.index)
+        else:
+            self.timeframe = timeframe
         return self.timeframe
 
     def backtest_vbt_strategy(self):
@@ -1072,22 +1087,23 @@ class CryptoBacktest:
             trades_df.to_csv('./test_5m/trades_vbt_with_with_fees.csv', index=False)
 
     def plot_vbt_results(self):
-        """
-        Returns a list of stats dictionaries (one per symbol).
-        Includes the vectorbt stats and any custom stats from self.lst_of_my_result.
-        """
-        pf = self.pf
-        # stats = dict(pf.stats())  # vbt-pro stats
-
-        fig = pf.plot()
         if False:
-            fig.show()
-        else:
-            filename = os.path.join(self.save_dir,
-                                    f'{self.id}_{self.symbol.replace("/", "_")}_{self.timeframe}_{self.ma_type}_{self.trend_type}_{self.stop_loss}_{self.trading_fee}_vbt.html')
+            """
+            Returns a list of stats dictionaries (one per symbol).
+            Includes the vectorbt stats and any custom stats from self.lst_of_my_result.
+            """
+            pf = self.pf
+            # stats = dict(pf.stats())  # vbt-pro stats
 
-            # full_path = os.path.join(self.save_dir, filename)
-            fig.write_html(filename)
+            fig = pf.plot()
+            if False:
+                fig.show()
+            else:
+                filename = os.path.join(self.save_dir,
+                                        f'{self.id}_{self.symbol.replace("/", "_")}_{self.timeframe}_{self.ma_type}_{self.trend_type}_{self.stop_loss}_{self.trading_fee}_vbt.html')
+
+                # full_path = os.path.join(self.save_dir, filename)
+                fig.write_html(filename)
 
 def set_df_with_missing_data(df):
     # Define your lists
@@ -1122,11 +1138,14 @@ def set_df_with_missing_data(df):
 
 # Create a lock for file I/O operations
 file_io_lock = threading.Lock()
+file_io_lock_2 = threading.Lock()
 
 # Define your per-parameter processing function
 def process_param(param, start_date, end_date, low_timeframe, high_timeframe, save_dir, input_data, file_io_lock):
+    print(f"[process_param] ID={param['ID']} on thread {threading.current_thread().name}")
     # Unpack parameters from the param dictionary
     id = param["ID"]
+    symbol = param["SYMBOL"]
     timeframe = param["TIMEFRAME"]
     ma_type = param["MA_TYPE"]
     trend_type = param["TREND_TYPE"]
@@ -1151,7 +1170,7 @@ def process_param(param, start_date, end_date, low_timeframe, high_timeframe, sa
     # Instantiate your CryptoBacktest object (make sure that CryptoBacktest is imported)
     backtest = CryptoBacktest(
         id,
-        'BTC/USDT',
+        symbol,
         start_date,
         end_date,
         timeframe,
@@ -1183,6 +1202,7 @@ def process_param(param, start_date, end_date, low_timeframe, high_timeframe, sa
 
     # Plot results
     backtest.plot_results()
+    # backtest.plot_pnl()
     backtest.plot_vbt_results()
 
     # Retrieve and return metrics
@@ -1193,19 +1213,17 @@ def process_param(param, start_date, end_date, low_timeframe, high_timeframe, sa
 def main():
     MULTI_FROM_CSV = True
 
-    if False:
-        end_date = datetime.utcnow()
+    if True:
+        end_date = datetime.utcnow().replace(tzinfo=timezone.utc)
     else:
         end_date_str = "2025-02-02 18:21:45.707833"
-
+        nd_date_str = "2025-02-07 13:06:22.392898+00:00"
         # Convert the string to a datetime object
         end_date = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S.%f")
 
-    end_date = datetime.utcnow().replace(tzinfo=timezone.utc)
-
-    print("end date: ", end_date)
-
     start_date = '2024-01-01T00:00:00Z'
+    print("start date: ", start_date)
+    print("end date: ", end_date)
 
     low_timeframe = '1m'
     high_timeframe = '1h'
@@ -1215,15 +1233,15 @@ def main():
         input_file_csv = "input_data_excel.csv"
         input_file_csv_2 = "input_data_full.csv"
         output_file_csv = "output_data_full_test.csv"
+        output_file_csv_tmp = "output_data_full_test_tmp.csv"
         save_dir = "result_test"
-
-        lst_stats = []
 
         # Join the directory and file name to form the full path
         file_path = os.path.join(working_directory, input_file_csv)
         file_path_2 = os.path.join(working_directory, input_file_csv_2)
         save_dir = os.path.join(working_directory, save_dir)
         file_path_output = os.path.join(save_dir, output_file_csv)
+        file_path_output_tmp = os.path.join(save_dir, output_file_csv_tmp)
 
         # Check if the file exists
         if os.path.exists(file_path):
@@ -1242,9 +1260,20 @@ def main():
         convert_csv_for_excel(file_path_2, new_excel_path)
 
         if False:
-            df_input_data = df_input_data.head(10)  # For test
+            df_input_data = df_input_data.head(1)  # For test
+            # df_input_data = df_input_data[df_input_data['ID'] == 2]
 
-        df_input_data = df_input_data[df_input_data['ID'] == 2]
+        if True: # Filter
+            directory_path = r"C:\Users\INTRADE\PycharmProjects\Analysis\ObelixParam\test_multi_trend\result_test"
+
+            print("total to perform: ", len(df_input_data))
+            # Get the list of prefixes
+            id_list = utils.get_numeric_prefixes(directory_path)
+            id_list = list(map(int, id_list))
+            print("total already performed: ", len(id_list))
+            df_input_data = utils.drop_rows_by_id(df_input_data, id_list)
+            print("remaining to perform: ", len(df_input_data))
+
 
         lst_params = []
         for _, row in df_input_data.iterrows():
@@ -1252,6 +1281,7 @@ def main():
             param = row.to_dict()
             lst_params.append(param)
 
+        print("nb combination: ", len(df_input_data))
         # Control whether to use multithreading or sequential execution
         multi_threading = True  # Set to False for sequential execution
 
@@ -1261,6 +1291,7 @@ def main():
         lst_stats = []  # This will store the metrics from each backtest
 
         if multi_threading:
+            print("multithreading is on: ", max_threads)
             # Use ThreadPoolExecutor with a limit on the maximum number of threads
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
                 # Submit tasks: pass all required parameters to process_param
@@ -1282,7 +1313,13 @@ def main():
                 for future in concurrent.futures.as_completed(futures):
                     try:
                         result = future.result()
-                        lst_stats.append(result)
+                        with file_io_lock_2:
+                            lst_stats.append(result)
+                            df = pd.DataFrame(lst_stats)
+                            df.to_csv(file_path_output_tmp)
+
+                            new_excel_path = utils.add_exel_before_csv(file_path_output_tmp)
+                            convert_csv_for_excel(file_path_output_tmp, new_excel_path)
                     except Exception as exc:
                         print(f"Exception occurred: {exc}")
         else:

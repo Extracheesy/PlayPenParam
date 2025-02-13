@@ -213,7 +213,7 @@ class CryptoBacktest:
             since = ohlcv[-1][0] + 1  # Move to the next timestamp to avoid overlap
             time.sleep(exchange.rateLimit / 1000)  # Respect rate limit
 
-    def fetch_data(self, data_attr):
+    def fetch_data(self, data_attr, reverse=False):
         """
         Fetches OHLCV data for the specified timeframe and saves it to the specified data attribute.
 
@@ -309,259 +309,19 @@ class CryptoBacktest:
         if self.end_date is not None:
             df = df[df.index <= pd.to_datetime(self.end_date)]
 
+        if reverse:
+            backup_index = df.index.copy()
+            df = df[::-1].reset_index(drop=False)
+            df.index = backup_index
+            df = df.drop('timestamp', axis=1)
+            df.rename(columns={'open': 'close', 'close': 'open'}, inplace=True)
+
         # Assign the DataFrame to the specified attribute
         setattr(self, data_attr, df)
 
         # Save the fetched data to a file
         print("Saving fetched data to file...")
         getattr(self, data_attr).to_csv(data_file)
-
-    def ___fetch_data(self):
-        # Determine the end time
-        now = datetime.utcnow() if self.end_date is None else self.end_date
-        if self.end_date is not None:
-            self.end_date = utils.round_time(now, self.timeframe)
-            self.end_date = self.end_date.strftime('%Y-%m-%dT%H:%M:%SZ')
-
-        # Format file name
-        rounded_time = utils.round_time(now, self.timeframe)
-        formatted_time = rounded_time.strftime('%Y-%m-%d-%H-%M')
-        date_with_minute = self.start_date.replace('T', '-')[:16].replace(':', '-')
-        data_file = os.path.join(
-            self.save_dir,
-            f'{self.symbol.replace("/", "_")}_data_{self.timeframe}_{date_with_minute}_{formatted_time}.csv'
-        )
-
-        # Load data from file if it exists
-        if os.path.exists(data_file):
-            print("Loading data from file...")
-            self.data = pd.read_csv(data_file, parse_dates=['timestamp'], index_col='timestamp')
-            return
-
-        # Initialize the exchange
-        exchange = ccxt.binance()
-
-        # Parse the start date
-        since = exchange.parse8601(self.start_date)
-
-        # Initialize an empty list to store all OHLCV data
-        all_ohlcv = []
-
-        # Create a lock for thread-safe operations
-        lock = threading.Lock()
-
-        def fetch_data_batch(exchange, timeframe, since, all_ohlcv, lock, end_timestamp=None):
-            """
-            Fetches OHLCV data in batches and appends it to the all_ohlcv list.
-            """
-            while True:
-                with lock:
-                    # Fetch OHLCV data
-                    ohlcv = exchange.fetch_ohlcv(
-                        self.symbol,
-                        timeframe=timeframe,
-                        since=since,
-                        limit=1000,  # Adjust the limit as needed
-                        params={'endTime': end_timestamp} if end_timestamp else None
-                    )
-                    if not ohlcv:
-                        break  # No more data to fetch
-                    all_ohlcv.extend(ohlcv)
-                    since = ohlcv[-1][0] + 1  # Update since to the next timestamp
-
-        # If end_date is provided, parse it into a timestamp
-        end_timestamp = exchange.parse8601(self.end_date) if self.end_date is not None else None
-
-        # Create and start the thread
-        thread = threading.Thread(
-            target=fetch_data_batch,
-            args=(exchange, self.timeframe, since, all_ohlcv, lock, end_timestamp)
-        )
-        thread.start()
-        thread.join()
-
-        # Convert the OHLCV data into a DataFrame
-        df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
-        df.set_index('timestamp', inplace=True)
-
-        # Filter the DataFrame based on end_date (if provided)
-        if self.end_date is not None:
-            df = df[df.index <= pd.to_datetime(self.end_date)]
-
-        # Assign the DataFrame to self.data
-        self.data = df
-
-        # Save the fetched data to a file
-        print("Saving fetched data to file...")
-        self.data.to_csv(data_file)
-
-
-    def ___fetch_low_tf_data(self):
-        if self.end_date is None:
-            dt_end_date = datetime.utcnow()
-        else:
-            if isinstance(self.end_date, str):
-                dt_end_date = datetime.strptime(self.end_date, "%Y-%m-%dT%H:%M:%SZ")
-            else:
-                dt_end_date = self.end_date  # Assume it's already a datetime object
-
-            self.end_date = utils.round_time(dt_end_date, self.low_timeframe)
-            self.end_date = self.end_date.strftime('%Y-%m-%dT%H:%M:%SZ')
-
-        rounded_time = utils.round_time(dt_end_date, self.low_timeframe)
-        formatted_time = rounded_time.strftime('%Y-%m-%d-%H-%M')  # Replace ':' with '-'
-        date_with_minute = self.start_date.replace('T', '-')[:16].replace(':', '-')  # Replace ':' with '-'
-        data_file = os.path.join(
-            self.save_dir,
-            f'{self.symbol.replace("/", "_")}_data_{self.low_timeframe}_{date_with_minute}_{formatted_time}.csv'
-        )
-
-        if os.path.exists(data_file):
-            print("Loading data from file...")
-            self.low_tf_data = pd.read_csv(data_file, parse_dates=['timestamp'], index_col='timestamp')
-            return
-
-        # Initialize the exchange
-        exchange = ccxt.binance()
-
-        # Parse the start date
-        since = exchange.parse8601(self.start_date)
-
-        # Initialize an empty list to store all OHLCV data
-        all_ohlcv = []
-
-        # Create a lock for thread-safe operations
-        lock = threading.Lock()
-
-        # Define the thread target function
-        def fetch_data_batch(exchange, timeframe, since, all_ohlcv, lock, end_timestamp=None):
-            """
-            Fetches OHLCV data in batches and appends it to the all_ohlcv list.
-            """
-            while True:
-                with lock:
-                    # Fetch OHLCV data
-                    ohlcv = exchange.fetch_ohlcv(
-                        self.symbol,
-                        timeframe=timeframe,
-                        since=since,
-                        limit=1000,  # Adjust the limit as needed
-                        params={'endTime': end_timestamp} if end_timestamp else None
-                    )
-                    if not ohlcv:
-                        break  # No more data to fetch
-                    all_ohlcv.extend(ohlcv)
-                    since = ohlcv[-1][0] + 1  # Update since to the next timestamp
-
-        # If end_date is provided, parse it into a timestamp
-        end_timestamp = exchange.parse8601(self.end_date) if self.end_date is not None else None
-
-        # Create and start the thread
-        thread = threading.Thread(
-            target=fetch_data_batch,
-            args=(exchange, self.low_timeframe, since, all_ohlcv, lock, end_timestamp)
-        )
-        thread.start()
-        thread.join()
-
-        # Convert the OHLCV data into a DataFrame
-        df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
-        df.set_index('timestamp', inplace=True)
-
-        # Filter the DataFrame based on end_date (if provided)
-        if self.end_date is not None:
-            df = df[df.index <= pd.to_datetime(self.end_date)]
-
-        # Assign the DataFrame to self.data
-        self.low_tf_data = df
-
-        print("Saving fetched data to file...")
-        self.low_tf_data.to_csv(data_file)
-
-    def ___fetch_high_tf_data(self):
-        if self.end_date is None:
-            dt_end_date = datetime.utcnow()
-        else:
-            if isinstance(self.end_date, str):
-                dt_end_date = datetime.strptime(self.end_date, "%Y-%m-%dT%H:%M:%SZ")
-            else:
-                dt_end_date = self.end_date  # Assume it's already a datetime object
-
-            self.end_date = utils.round_time(dt_end_date, self.high_timeframe)
-            self.end_date = self.end_date.strftime('%Y-%m-%dT%H:%M:%SZ')
-
-        rounded_time = utils.round_time(dt_end_date, self.high_timeframe)
-        formatted_time = rounded_time.strftime('%Y-%m-%d-%H-%M')  # Replace ':' with '-'
-        date_with_minute = self.start_date.replace('T', '-')[:16].replace(':', '-')  # Replace ':' with '-'
-        data_file = os.path.join(
-            self.save_dir,
-            f'{self.symbol.replace("/", "_")}_data_{self.high_timeframe}_{date_with_minute}_{formatted_time}.csv'
-        )
-
-        if os.path.exists(data_file):
-            print("Loading data from file...")
-            self.high_tf_data = pd.read_csv(data_file, parse_dates=['timestamp'], index_col='timestamp')
-            return
-
-        # Initialize the exchange
-        exchange = ccxt.binance()
-
-        # Parse the start date
-        since = exchange.parse8601(self.start_date)
-
-        # Initialize an empty list to store all OHLCV data
-        all_ohlcv = []
-
-        # Create a lock for thread-safe operations
-        lock = threading.Lock()
-
-        # Define the thread target function
-        def fetch_data_batch(exchange, timeframe, since, all_ohlcv, lock, end_timestamp=None):
-            """
-            Fetches OHLCV data in batches and appends it to the all_ohlcv list.
-            """
-            while True:
-                with lock:
-                    # Fetch OHLCV data
-                    ohlcv = exchange.fetch_ohlcv(
-                        self.symbol,
-                        timeframe=timeframe,
-                        since=since,
-                        limit=1000,  # Adjust the limit as needed
-                        params={'endTime': end_timestamp} if end_timestamp else None
-                    )
-                    if not ohlcv:
-                        break  # No more data to fetch
-                    all_ohlcv.extend(ohlcv)
-                    since = ohlcv[-1][0] + 1  # Update since to the next timestamp
-
-        # If end_date is provided, parse it into a timestamp
-        end_timestamp = exchange.parse8601(self.end_date) if self.end_date is not None else None
-
-        # Create and start the thread
-        thread = threading.Thread(
-            target=fetch_data_batch,
-            args=(exchange, self.high_timeframe, since, all_ohlcv, lock, end_timestamp)
-        )
-        thread.start()
-        thread.join()
-
-        # Convert the OHLCV data into a DataFrame
-        df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
-        df.set_index('timestamp', inplace=True)
-
-        # Filter the DataFrame based on end_date (if provided)
-        if self.end_date is not None:
-            df = df[df.index <= pd.to_datetime(self.end_date)]
-
-        # Assign the DataFrame to self.data
-        self.high_tf_data = df
-
-        print("Saving fetched data to file...")
-        self.high_tf_data.to_csv(data_file)
 
     def apply_indicator(self):
         if self.data is None:
@@ -1185,14 +945,15 @@ def process_param(param, start_date, end_date, low_timeframe, high_timeframe, sa
         stop_loss=STOP_LOSS
     )
 
+    REVERSE_MODE = True
     with file_io_lock:
         # Fetch and process data
-        backtest.fetch_data(data_attr='data')
+        backtest.fetch_data(data_attr='data', reverse=REVERSE_MODE)
         # The condition below always evaluates to True because of "or True",
         # so adjust it if necessary.
         if STOP_LOSS != 0 or True:
-            backtest.fetch_data(data_attr='low_tf_data')
-        backtest.fetch_data(data_attr='high_tf_data')
+            backtest.fetch_data(data_attr='low_tf_data', reverse=REVERSE_MODE)
+        backtest.fetch_data(data_attr='high_tf_data', reverse=REVERSE_MODE)
 
     # Apply indicators and perform backtests
     backtest.apply_indicator()
@@ -1207,6 +968,8 @@ def process_param(param, start_date, end_date, low_timeframe, high_timeframe, sa
 
     # Retrieve and return metrics
     dct_stats = backtest.get_metrics()
+
+    del backtest
     print("######################################################")
     return dct_stats
 
@@ -1229,7 +992,7 @@ def main():
     high_timeframe = '1h'
 
     if MULTI_FROM_CSV:
-        working_directory = "./test_multi_trend"
+        working_directory = "./test_multi_trend_reverse"
         input_file_csv = "input_data_excel.csv"
         input_file_csv_2 = "input_data_full.csv"
         output_file_csv = "output_data_full_test.csv"
@@ -1264,7 +1027,7 @@ def main():
             # df_input_data = df_input_data[df_input_data['ID'] == 2]
 
         if True: # Filter
-            directory_path = r"C:\Users\INTRADE\PycharmProjects\Analysis\ObelixParam\test_multi_trend\result_test"
+            directory_path = r"C:\Users\INTRADE\PycharmProjects\Analysis\ObelixParam\test_multi_trend_reverse\result_test"
 
             print("total to perform: ", len(df_input_data))
             # Get the list of prefixes
@@ -1316,10 +1079,32 @@ def main():
                         with file_io_lock_2:
                             lst_stats.append(result)
                             df = pd.DataFrame(lst_stats)
-                            df.to_csv(file_path_output_tmp)
+
+                            success = False
+                            attempt = 0
+                            max_attempts = 5  # Number of times to try before giving up
+                            while not success and attempt < max_attempts:
+                                try:
+                                    df.to_csv(file_path_output_tmp)
+                                    success = True
+                                    print("File saved successfully.")
+                                except Exception as e:
+                                    attempt += 1
+                                    print(f"Attempt {attempt} failed with error: {e}")
 
                             new_excel_path = utils.add_exel_before_csv(file_path_output_tmp)
-                            convert_csv_for_excel(file_path_output_tmp, new_excel_path)
+                            success = False
+                            attempt = 0
+                            max_attempts = 5  # Number of times to try before giving up
+                            while not success and attempt < max_attempts:
+                                try:
+                                    convert_csv_for_excel(file_path_output_tmp, new_excel_path)
+                                    success = True
+                                    print("File saved successfully.")
+                                except Exception as e:
+                                    attempt += 1
+                                    print(f"Attempt {attempt} failed with error: {e}")
+
                     except Exception as exc:
                         print(f"Exception occurred: {exc}")
         else:

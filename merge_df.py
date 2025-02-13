@@ -1,7 +1,9 @@
 import os
 import sys
 import pandas as pd
+import utils
 
+from convert_to_xcel import convert_csv_for_excel
 
 def list_csv_files(input_dir: str) -> list:
     """
@@ -61,6 +63,7 @@ def save_merged_csv(df: pd.DataFrame, output_path: str) -> None:
     # Print the list
     print("Duplicated IDs list:", duplicated_ids_list)
 
+
 def main():
     """
     Main function that orchestrates listing CSV files, merging them,
@@ -78,8 +81,24 @@ def main():
     # 2. Merge them and remove duplicates
     merged_df = merge_and_remove_duplicates(csv_files)
 
+
+
+    # 1. Convert END_DATE to datetime
+    merged_df["END_DATE"] = pd.to_datetime(merged_df["END_DATE"], format="%Y-%m-%d %H:%M:%S,%f%z")
+
+    # 2. Sort the DataFrame by END_DATE
+    df_sorted = merged_df.sort_values(by="END_DATE")
+
+    # 3. Drop duplicates based on ID, keeping the last (the one with the max END_DATE)
+    df_latest = df_sorted.drop_duplicates(subset="ID", keep="last")
+
+    merged_df = df_latest
+
     # 3. Save the merged DataFrame to the output path
     save_merged_csv(merged_df, output_csv)
+
+    new_excel_path = utils.add_exel_before_csv(output_csv)
+    convert_csv_for_excel(output_csv, new_excel_path)
 
 
 

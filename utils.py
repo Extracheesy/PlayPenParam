@@ -12,6 +12,11 @@ except ImportError:
     # For older versions of Pandas, use:
     from pandas.tseries.frequencies import to_offset
 
+def safe_float(value):
+    if isinstance(value, str):
+        return float(value.replace(",", "."))
+    else:
+        return float(value)  # Handles int and float
 
 def infer_timeframe(index) -> str:
     """
@@ -181,6 +186,9 @@ def get_numeric_prefixes(directory_path):
 
     prefixes = []
 
+    if not os.path.exists(directory_path):
+        os.makedirs(directory_path)
+
     # List all files in the given directory
     for filename in os.listdir(directory_path):
         # We're only interested in CSV files
@@ -209,5 +217,12 @@ def drop_rows_by_id(df, id_list):
 
     # Optionally, you can use .copy() if you want a completely independent DataFrame
     # filtered_df = df[~df["ID"].isin(id_list)].copy()
+
+    return filtered_df
+
+def drop_zero_fees(df):
+    filtered_df = df[df["FEES"] != float(0.0)]
+
+    filtered_df = filtered_df[filtered_df["SYMBOL"] != "PEPEUSDT"].copy()
 
     return filtered_df

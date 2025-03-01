@@ -180,6 +180,8 @@ class CryptoBacktest:
         self.data = None
         self.trades = []  # Stores trade details
 
+        self.VBT_PLOT = False
+
         self.save_trades = False
         self.print_all = print_all
         self.show_plot = self.print_all
@@ -723,46 +725,47 @@ class CryptoBacktest:
         print(f"PnL Graph saved at {save_path}")
 
     def plot_results(self):
-        if self.data is None:
-            raise ValueError("No data to plot.")
+        with plot_io_lock:
+            if self.data is None:
+                raise ValueError("No data to plot.")
 
-        plt.figure(figsize=(12, 6))
-        plt.plot(self.data.index, self.data['cumulative_strategy_returns'], label='Strategy Returns', color='blue')
-        plt.plot(self.data.index, self.data['cumulative_buy_hold'], label='Buy & Hold Returns', color='black',
-                 linestyle='dashed')
-        plt.legend()
-        plt.xlabel('Date')
-        plt.ylabel('Cumulative Returns')
-        plt.title(f'{self.symbol} Backtest Results')
-        plt.grid()
-
-        save_path = os.path.join(self.save_dir,
-                                 f'{self.id}_{self.symbol.replace("/", "_")}_{self.timeframe}_{self.ma_type}_{self.trend_type}_{self.stop_loss}_{self.trading_fee}_returns.png')
-        plt.savefig(save_path)
-        if self.show_plot:
-            plt.show()
-        print(f"Graph saved at {save_path}")
-
-        if False:
             plt.figure(figsize=(12, 6))
-            plt.plot(self.data.index, self.data['close'], label='Close Price', color='blue', alpha=0.5)
-            plt.plot(self.data.index, self.data['buy_adj'], label='Buy Adj', color='green', linestyle='dashed')
-            plt.plot(self.data.index, self.data['sell_adj'], label='Sell Adj', color='red', linestyle='dashed')
-            plt.scatter(self.data.index, self.data['buy_signal'], label='Buy Signal', marker='^', color='lime', s=80)
-            plt.scatter(self.data.index, self.data['sell_signal'], label='Sell Signal', marker='v', color='red', s=80)
+            plt.plot(self.data.index, self.data['cumulative_strategy_returns'], label='Strategy Returns', color='blue')
+            plt.plot(self.data.index, self.data['cumulative_buy_hold'], label='Buy & Hold Returns', color='black',
+                     linestyle='dashed')
             plt.legend()
             plt.xlabel('Date')
-            plt.ylabel('Price')
-            plt.title(f'{self.symbol} Buy/Sell Signals with {self.ma_type} Indicator')
+            plt.ylabel('Cumulative Returns')
+            plt.title(f'{self.symbol} Backtest Results')
             plt.grid()
 
-            save_path_signals = os.path.join(self.save_dir,
-                                             f'{self.id}_{self.symbol.replace("/", "_")}_{self.timeframe}_{self.ma_type}_{self.trend_type}_{self.stop_loss}_{self.trading_fee}_signals.png')
-
-            plt.savefig(save_path_signals)
+            save_path = os.path.join(self.save_dir,
+                                     f'{self.id}_{self.symbol.replace("/", "_")}_{self.timeframe}_{self.ma_type}_{self.trend_type}_{self.stop_loss}_{self.trading_fee}_returns.png')
+            plt.savefig(save_path)
             if self.show_plot:
                 plt.show()
-            print(f"Graph saved at {save_path_signals}")
+            print(f"Graph saved at {save_path}")
+
+            if False:
+                plt.figure(figsize=(12, 6))
+                plt.plot(self.data.index, self.data['close'], label='Close Price', color='blue', alpha=0.5)
+                plt.plot(self.data.index, self.data['buy_adj'], label='Buy Adj', color='green', linestyle='dashed')
+                plt.plot(self.data.index, self.data['sell_adj'], label='Sell Adj', color='red', linestyle='dashed')
+                plt.scatter(self.data.index, self.data['buy_signal'], label='Buy Signal', marker='^', color='lime', s=80)
+                plt.scatter(self.data.index, self.data['sell_signal'], label='Sell Signal', marker='v', color='red', s=80)
+                plt.legend()
+                plt.xlabel('Date')
+                plt.ylabel('Price')
+                plt.title(f'{self.symbol} Buy/Sell Signals with {self.ma_type} Indicator')
+                plt.grid()
+
+                save_path_signals = os.path.join(self.save_dir,
+                                                 f'{self.id}_{self.symbol.replace("/", "_")}_{self.timeframe}_{self.ma_type}_{self.trend_type}_{self.stop_loss}_{self.trading_fee}_signals.png')
+
+                plt.savefig(save_path_signals)
+                if self.show_plot:
+                    plt.show()
+                print(f"Graph saved at {save_path_signals}")
 
     def __get_frequency(self):
         inferred_freq = pd.infer_freq(self.data.index)
@@ -801,7 +804,6 @@ class CryptoBacktest:
         self.sell_signal_long = (self.data['close'] > self.data['sell_adj']).astype(int)
         exits_long = self.sell_signal_long == 1
         """
-
         self.data_for_vbt["close_vbt"] = np.where(
             self.data_for_vbt["close"].isnull(),  # Check if "close" is NaN
             self.data_for_vbt["close_low_tf"],  # If True, use value from "close_low_tf"
@@ -847,7 +849,7 @@ class CryptoBacktest:
             trades_df.to_csv('./test_5m/trades_vbt_with_with_fees.csv', index=False)
 
     def plot_vbt_results(self):
-        if False:
+        if self.VBT_PLOT:
             """
             Returns a list of stats dictionaries (one per symbol).
             Includes the vectorbt stats and any custom stats from self.lst_of_my_result.
@@ -899,6 +901,7 @@ def set_df_with_missing_data(df):
 # Create a lock for file I/O operations
 file_io_lock = threading.Lock()
 file_io_lock_2 = threading.Lock()
+plot_io_lock = threading.Lock()
 
 # Define your per-parameter processing function
 def process_param(param, start_date, end_date, low_timeframe, high_timeframe, save_dir, input_data, file_io_lock):
@@ -909,13 +912,15 @@ def process_param(param, start_date, end_date, low_timeframe, high_timeframe, sa
     timeframe = param["TIMEFRAME"]
     ma_type = param["MA_TYPE"]
     trend_type = param["TREND_TYPE"]
-    HIGH_OFFSET = float(param["HIGH_OFFSET"].replace(",", "."))
-    LOW_OFFSET = float(param["LOW_OFFSET"].replace(",", "."))
     ZEMA_LEN_BUY = int(param["ZEMA_LEN_BUY"])
     ZEMA_LEN_SELL = int(param["ZEMA_LEN_SELL"])
     SSL_ATR_PERIOD = int(param["SSL_ATR_PERIOD"])
-    FEES = float(param["FEES"])
-    STOP_LOSS = float(param["STOP_LOSS"])
+
+    # Convert each parameter safely
+    HIGH_OFFSET = utils.safe_float(param["HIGH_OFFSET"])
+    LOW_OFFSET = utils.safe_float(param["LOW_OFFSET"])
+    FEES = utils.safe_float(param["FEES"])
+    STOP_LOSS = utils.safe_float(param["STOP_LOSS"])
 
     # Build additional parameters dictionary
     params = {
@@ -945,7 +950,7 @@ def process_param(param, start_date, end_date, low_timeframe, high_timeframe, sa
         stop_loss=STOP_LOSS
     )
 
-    REVERSE_MODE = True
+    REVERSE_MODE = False
     with file_io_lock:
         # Fetch and process data
         backtest.fetch_data(data_attr='data', reverse=REVERSE_MODE)
@@ -975,6 +980,7 @@ def process_param(param, start_date, end_date, low_timeframe, high_timeframe, sa
 
 def main():
     MULTI_FROM_CSV = True
+    FINAL_SELECTION = False
 
     if True:
         end_date = datetime.utcnow().replace(tzinfo=timezone.utc)
@@ -984,15 +990,27 @@ def main():
         # Convert the string to a datetime object
         end_date = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S.%f")
 
-    start_date = '2024-01-01T00:00:00Z'
-    print("start date: ", start_date)
-    print("end date: ", end_date)
+    if FINAL_SELECTION:
+        start_date = '2025-01-01T00:00:00Z'
+        # start_date = '2024-01-01T00:00:00Z'
+        print("start date: ", start_date)
+        print("end date: ", end_date)
+    else:
+        start_date = '2024-01-01T00:00:00Z'
+        print("start date: ", start_date)
+        print("end date: ", end_date)
 
     low_timeframe = '1m'
     high_timeframe = '1h'
 
     if MULTI_FROM_CSV:
-        working_directory = "./test_multi_trend_reverse"
+        if FINAL_SELECTION:
+            working_directory = "./test_multi_trend_selection"
+        else:
+            working_directory = "./test_multi_trend_reverse"
+
+        working_directory = "./test_multi_trend_selection"
+
         input_file_csv = "input_data_excel.csv"
         input_file_csv_2 = "input_data_full.csv"
         output_file_csv = "output_data_full_test.csv"
@@ -1013,21 +1031,32 @@ def main():
             print(f"File does not exist at: {file_path}")
 
         lock = threading.Lock()
-        df_input_data = utils.read_csv_thread_safe(file_path, lock)
+        if False:
+            df_input_data = utils.read_csv_thread_safe(file_path, lock)
+            # df_input_data = set_df_with_missing_data(df_input_data)
+            # df_input_data = df_input_data.sample(frac=1, random_state=42).reset_index(drop=True)
+            df_input_data.to_csv(file_path_2)
 
-        df_input_data = set_df_with_missing_data(df_input_data)
-        df_input_data = df_input_data.sample(frac=1, random_state=42).reset_index(drop=True)
-        df_input_data.to_csv(file_path_2)
+            new_excel_path = utils.add_exel_before_csv(file_path_2)
+            convert_csv_for_excel(file_path_2, new_excel_path)
+        else:
+            df_input_data = utils.read_csv_thread_safe(file_path, lock)
 
-        new_excel_path = utils.add_exel_before_csv(file_path_2)
-        convert_csv_for_excel(file_path_2, new_excel_path)
+            df_input_data = set_df_with_missing_data(df_input_data)
+            df_input_data = df_input_data.sample(frac=1, random_state=42).reset_index(drop=True)
+            df_input_data = utils.drop_zero_fees(df_input_data)
+            df_input_data.to_csv(file_path_2)
+
+            new_excel_path = utils.add_exel_before_csv(file_path_2)
+            convert_csv_for_excel(file_path_2, new_excel_path)
 
         if False:
             df_input_data = df_input_data.head(1)  # For test
             # df_input_data = df_input_data[df_input_data['ID'] == 2]
 
         if True: # Filter
-            directory_path = r"C:\Users\INTRADE\PycharmProjects\Analysis\ObelixParam\test_multi_trend_reverse\result_test"
+            directory_path = r"C:\Users\INTRADE\PycharmProjects\Analysis\ObelixParam\test_multi_trend_selection\result_test"
+            working_directory += working_directory + r"\result_test"
 
             print("total to perform: ", len(df_input_data))
             # Get the list of prefixes
@@ -1049,7 +1078,7 @@ def main():
         multi_threading = True  # Set to False for sequential execution
 
         # Set the maximum number of threads to run concurrently
-        max_threads = 2
+        max_threads = 4
 
         lst_stats = []  # This will store the metrics from each backtest
 

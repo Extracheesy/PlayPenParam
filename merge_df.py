@@ -73,7 +73,8 @@ def main():
       python merge_csv.py <input_directory> <output_csv_file>
     """
     input_dir = r"C:\Users\INTRADE\PycharmProjects\Analysis\ObelixParam\test_multi_trend\result_test\run_failed\exel"
-    output_csv = r"C:\Users\INTRADE\PycharmProjects\Analysis\ObelixParam\test_multi_trend\result_test\run_failed\exel\output_merged.csv"
+    input_dir = r"C:\Users\INTRADE\PycharmProjects\Analysis\ObelixParam\test_multi_trend_selection\result_test\backup\excel"
+    output_csv = r"C:\Users\INTRADE\PycharmProjects\Analysis\ObelixParam\test_multi_trend_selection\result_test\backup\excel\output_merged.csv"
 
     # 1. List all CSV files
     csv_files = list_csv_files(input_dir)

@@ -226,3 +226,41 @@ def drop_zero_fees(df):
     filtered_df = filtered_df[filtered_df["SYMBOL"] != "PEPEUSDT"].copy()
 
     return filtered_df
+
+
+def keep_lst_ids(df, lst):
+    """
+    Keep only rows in df where the 'ID' column value is in lst.
+    If lst is empty, return the original DataFrame without changes.
+
+    Parameters:
+    - df: pandas DataFrame containing an 'ID' column.
+    - lst: list of ids to keep.
+
+    Returns:
+    - A filtered DataFrame (or the original DataFrame if lst is empty).
+    """
+    if not lst:  # Check if the list is empty
+        return df
+    return df[df["ID"].isin(lst)]
+
+def keep_lst_symbols(df, lst):
+    if not lst:  # Check if the list is empty
+        return df
+    return df[df["SYMBOL"].isin(lst)]
+
+def keep_lst_indicators(df, lst):
+    """
+    Keep only rows in df where the 'ID' column value is in lst.
+    If lst is empty, return the original DataFrame without changes.
+
+    Parameters:
+    - df: pandas DataFrame containing an 'ID' column.
+    - lst: list of ids to keep.
+
+    Returns:
+    - A filtered DataFrame (or the original DataFrame if lst is empty).
+    """
+    if not lst:  # Check if the list is empty
+        return df
+    return df[df["MA_TYPE"].isin(lst)]

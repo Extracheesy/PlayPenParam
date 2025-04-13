@@ -24,6 +24,31 @@ import vectorbtpro as vbt
 import warnings
 warnings.filterwarnings("ignore")
 
+from datetime import datetime, timezone
+from dateutil.relativedelta import relativedelta
+
+from pandas.testing import assert_series_equal
+
+from ohlcv import get_candle_dataframe
+
+df_global_traces = pd.DataFrame()
+
+
+def get_3_month_intervals(start_date_str):
+    # Convert input string to datetime
+    current = datetime.fromisoformat(start_date_str.replace("Z", "+00:00"))
+    end = datetime.utcnow().replace(tzinfo=timezone.utc)
+    # end = "2025-04-02"
+    # end = datetime(2025, 4, 2, tzinfo=timezone.utc)
+
+    dates = []
+    while current <= end:
+        start_date_str = current.strftime("%Y-%m-%d") + 'T00:00:00Z'
+        dates.append(start_date_str)
+        current += relativedelta(months=3)
+
+    return dates
+
 def ichimoku(data, params):
     """
     Computes Ichimoku indicator components (Tenkan-sen, Kijun-sen, Senkou spans,
@@ -159,12 +184,14 @@ def ssl_atr(data, period=7):
 
 class CryptoBacktest:
     def __init__(self, id, symbol, start_date, end_date, timeframe='1h', low_timeframe='1m', high_timeframe='1h', save_dir='results', ma_type='SMA', trend_type='ICHIMOKU', params=None,
-                 trading_fee=0.001, initial_balance=10000, stop_loss=0.02, print_all=False):
+                 trading_fee=0.001, initial_balance=10000, stop_loss=0.02, vbt_plot=False, print_all=False):
         self.id = id
         self.symbol = symbol
         self.start_date = start_date
         # self.end_date = datetime.utcnow().replace(tzinfo=timezone.utc)
-        self.end_date = end_date
+        # self.end_date = end_date
+        self.end_date = utils.round_time(end_date, timeframe)
+        self.str_end_date = self.end_date.strftime('%Y-%m-%dT%H:%M:%SZ')
         self.timeframe = timeframe
         self.low_timeframe = low_timeframe
         self.high_timeframe = high_timeframe
@@ -180,7 +207,7 @@ class CryptoBacktest:
         self.data = None
         self.trades = []  # Stores trade details
 
-        self.VBT_PLOT = False
+        self.VBT_PLOT = vbt_plot
 
         self.save_trades = False
         self.print_all = print_all
@@ -190,7 +217,7 @@ class CryptoBacktest:
         self.stats["ID"] = self.id
         self.stats['SYMBOL'] = self.symbol
         self.stats['START_DATE'] = self.start_date
-        self.stats['END_DATE'] = self.end_date
+        self.stats['END_DATE'] = self.str_end_date
         self.stats['TIMEFRAME'] = self.timeframe
         self.stats['MA_TYPE'] = self.ma_type
         self.stats['TREND_TYPE'] = self.trend_type
@@ -215,6 +242,19 @@ class CryptoBacktest:
             since = ohlcv[-1][0] + 1  # Move to the next timestamp to avoid overlap
             time.sleep(exchange.rateLimit / 1000)  # Respect rate limit
 
+    def fetch_data_biget(self):
+        if isinstance(self.end_date, str):
+            dt_end_date = datetime.strptime(self.end_date, "%Y-%m-%dT%H:%M:%SZ")
+        else:
+            dt_end_date = self.end_date  # Assume it's already a datetime object
+
+        # Round the end date to the nearest timeframe and format it
+        self.str_end_date = self.end_date.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        self.data = get_candle_dataframe(self.symbol, "1m")
+        self.low_tf_data = self.data.copy()
+        self.high_tf_data = get_candle_dataframe(self.symbol, "1H")
+
     def fetch_data(self, data_attr, reverse=False):
         """
         Fetches OHLCV data for the specified timeframe and saves it to the specified data attribute.
@@ -233,7 +273,8 @@ class CryptoBacktest:
             raise ValueError(f"Invalid data_attr: {data_attr}. Must be 'data', 'low_tf_data', or 'high_tf_data'.")
 
         # Determine the end time
-        if self.end_date is None:
+        # if self.end_date is None:
+        if False:
             dt_end_date = datetime.utcnow()
         else:
             if isinstance(self.end_date, str):
@@ -242,8 +283,7 @@ class CryptoBacktest:
                 dt_end_date = self.end_date  # Assume it's already a datetime object
 
             # Round the end date to the nearest timeframe and format it
-            self.end_date = utils.round_time(dt_end_date, timeframe)
-            self.end_date = self.end_date.strftime('%Y-%m-%dT%H:%M:%SZ')
+            self.str_end_date = self.end_date.strftime('%Y-%m-%dT%H:%M:%SZ')
 
         # Format the file name
         rounded_time = utils.round_time(dt_end_date, timeframe)
@@ -292,7 +332,7 @@ class CryptoBacktest:
                     since = ohlcv[-1][0] + 1  # Update since to the next timestamp
 
         # If end_date is provided, parse it into a timestamp
-        end_timestamp = exchange.parse8601(self.end_date) if self.end_date is not None else None
+        end_timestamp = exchange.parse8601(self.str_end_date) if self.str_end_date is not None else None
 
         # Create and start the thread
         thread = threading.Thread(
@@ -308,8 +348,8 @@ class CryptoBacktest:
         df.set_index('timestamp', inplace=True)
 
         # Filter the DataFrame based on end_date (if provided)
-        if self.end_date is not None:
-            df = df[df.index <= pd.to_datetime(self.end_date)]
+        if self.str_end_date is not None:
+            df = df[df.index <= pd.to_datetime(self.str_end_date)]
 
         if reverse:
             backup_index = df.index.copy()
@@ -333,12 +373,44 @@ class CryptoBacktest:
         if self.ma_type == "ZLEMA":
             ma_buy = talib.EMA(close_data, timeperiod=self.params['zema_len_buy']) * self.params['low_offset']
             ma_sell = talib.EMA(close_data, timeperiod=self.params['zema_len_sell']) * self.params['high_offset']
-        elif self.ma_type in ["ZLMA", "TEMA", "DEMA", "ALMA", "KAMA", "HMA"]:
-            if self.ma_type == "ZLMA":
-                zlma_buy = ta.zlma(close_data, timeperiod=self.params['zema_len_buy'], mamode="ema")
-                zlma_sell = ta.zlma(close_data, timeperiod=self.params['zema_len_sell'], mamode="ema")
+
+        elif self.ma_type in ["HMA", "HMA_1", "JMA", "ZLMA_HMA", "ZLMA_ZELMA", "ZLMA", "TEMA", "DEMA", "ALMA", "KAMA"]:
+            if self.ma_type == "ZLMA_HMA":
+                # zlma_buy = ta.zlma(close_data, timeperiod=self.params['zema_len_buy'], mamode="ema")
+                # zlma_sell = ta.zlma(close_data, timeperiod=self.params['zema_len_sell'], mamode="ema")
+                zlma_buy = ta.zlma(close_data, mamode="hma")
+                # zlma_sell = ta.zlma(close_data, mamode="hma")
+                zlma_sell = zlma_buy.copy()
                 ma_buy = zlma_buy * self.params['low_offset']
                 ma_sell = zlma_sell * self.params['high_offset']
+
+            elif self.ma_type == "ZLMA_ZELMA":
+                zlma_buy = ta.zlma(close_data, mamode="zlema")
+                # zlma_sell = ta.zlma(close_data, mamode="zlema")
+                zlma_sell = zlma_buy.copy()
+                ma_buy = zlma_buy * self.params['low_offset']
+                ma_sell = zlma_sell * self.params['high_offset']
+
+            elif self.ma_type == "ZLMA_HMA":
+                zlma_buy = ta.zlma(close_data, mamode="hma")
+                # zlma_sell = ta.zlma(close_data, mamode="hma")
+                zlma_sell = zlma_buy.copy()
+                ma_buy = zlma_buy * self.params['low_offset']
+                ma_sell = zlma_sell * self.params['high_offset']
+
+            elif self.ma_type == "ZLMA":
+                zlma_buy = ta.zlma(close_data)
+                # zlma_sell = ta.zlma(close_data)
+                zlma_sell = zlma_buy.copy()
+                ma_buy = zlma_buy * self.params['low_offset']
+                ma_sell = zlma_sell * self.params['high_offset']
+
+            elif self.ma_type == "JMA":
+                jma_buy = ta.jma(close_data)
+                # jma_sell = ta.jma(close_data)
+                jma_sell = jma_buy.copy()
+                ma_buy = jma_buy * self.params['low_offset']
+                ma_sell = jma_sell * self.params['high_offset']
 
             elif self.ma_type == "TEMA":
                 tema_buy = ta.tema(close_data, timeperiod=self.params['zema_len_buy'])
@@ -347,34 +419,83 @@ class CryptoBacktest:
                 ma_sell = tema_sell * self.params['high_offset']
 
             elif self.ma_type == "DEMA":
-                dema_buy = ta.dema(close_data, timeperiod=self.params['zema_len_buy'])
-                dema_sell = ta.dema(close_data, timeperiod=self.params['zema_len_sell'])
+                # dema_buy = ta.dema(close_data, timeperiod=self.params['zema_len_buy'])
+                # dema_sell = ta.dema(close_data, timeperiod=self.params['zema_len_sell'])
+                dema_buy = ta.dema(close_data)
+                dema_sell = ta.dema(close_data)
                 ma_buy = dema_buy * self.params['low_offset']
                 ma_sell = dema_sell * self.params['high_offset']
 
             elif self.ma_type == "ALMA":
-                alma_buy = ta.alma(close_data, timeperiod=self.params['zema_len_buy'])
-                alma_sell = ta.alma(close_data, timeperiod=self.params['zema_len_sell'])
+                # alma_buy = ta.alma(close_data, timeperiod=self.params['zema_len_buy'])
+                # alma_sell = ta.alma(close_data, timeperiod=self.params['zema_len_sell'])
+                alma_buy = ta.alma(close_data)
+                alma_sell = ta.alma(close_data)
 
                 ma_buy = alma_buy * self.params['low_offset']
                 ma_sell = alma_sell * self.params['high_offset']
 
             elif self.ma_type == "KAMA":
-                kama_buy = ta.kama(close_data, timeperiod=self.params['zema_len_buy'])
-                kama_sell = ta.kama(close_data, timeperiod=self.params['zema_len_sell'])
+                # kama_buy = ta.kama(close_data, timeperiod=self.params['zema_len_buy'])
+                # kama_sell = ta.kama(close_data, timeperiod=self.params['zema_len_sell'])
+                kama_buy = ta.kama(close_data)
+                kama_sell = ta.kama(close_data)
                 ma_buy = kama_buy * self.params['low_offset']
                 ma_sell = kama_sell * self.params['high_offset']
 
-            elif self.ma_type == "HMA":
-                hma_buy = ta.hma(close_data, timeperiod=self.params['zema_len_buy'])
+            elif self.ma_type == "HMA_1":
+                hma_buy = ta.hma(close_data, timeperiod=self.params['zema_len_buy'])     # CEDE TESTED OK
                 hma_sell = ta.hma(close_data, timeperiod=self.params['zema_len_sell'])
                 ma_buy = hma_buy * self.params['low_offset']
                 ma_sell = hma_sell * self.params['high_offset']
-        else:
-            raise ValueError(f"Unknown moving average type: {self.ma_type}")
 
-        self.data['buy_adj'] = ma_buy
-        self.data['sell_adj'] = ma_sell
+            elif self.ma_type == "HMA":
+                # hma_buy = ta.hma(close_data, timeperiod=self.params['zema_len_buy'])     # CEDE TESTED OK
+                # hma_sell = ta.hma(close_data, timeperiod=self.params['zema_len_sell'])
+                hma_buy = ta.hma(close_data)
+                # hma_sell = ta.hma(close_data)
+                hma_sell = hma_buy.copy()
+                ma_buy = hma_buy * self.params['low_offset']
+                ma_sell = hma_sell * self.params['high_offset']
+
+                if False:
+                    hma_buy_length = ta.hma(close_data, length=self.params['zema_len_buy'])
+
+                    df = pd.DataFrame({
+                        'hma_buy': hma_buy,
+                        'hma_buy_length': hma_buy_length
+                    })
+
+                    # Save the DataFrame to a CSV file (without the index)
+                    df.to_csv("hma_comparison.csv", index=False)
+                    exit(0)
+                    hma_buy = hma_buy_length
+
+                    try:
+                        assert_series_equal(hma_buy, hma_buy_length)
+                        print("Both methods produce identical outputs!")
+                    except AssertionError as e:
+                        print("There is a difference between the outputs:", e)
+
+            elif self.ma_type == "KAMA":
+                # kama_buy = ta.kama(close_data, timeperiod=self.params['zema_len_buy'])
+                # kama_sell = ta.kama(close_data, timeperiod=self.params['zema_len_sell'])
+                kama_buy = ta.kama(close_data)
+                kama_sell = ta.kama(close_data)
+                ma_buy = kama_buy * self.params['low_offset']
+                ma_sell = kama_sell * self.params['high_offset']
+
+            else:
+                raise ValueError(f"Unknown moving average type: {self.ma_type}")
+        try:
+            self.data['buy_adj'] = ma_buy
+            self.data['sell_adj'] = ma_sell
+        except:
+            print("toto")
+
+        df_global_traces['close'] = self.data['close']
+        df_global_traces['buy_adj'] = ma_buy
+        df_global_traces['sell_adj'] = ma_sell
 
     def apply_high_tf_indicator(self):
         if self.high_tf_data is None:
@@ -639,6 +760,8 @@ class CryptoBacktest:
         self._calculate_performance_metrics(balance, trade_pnls, num_wins, num_trades, max_drawdown)
         self._save_and_print_results()
 
+        # self.data.to_csv(str(self.id) + "_" + self.symbol + ".csv")
+
     def _calculate_performance_metrics(self, balance, trade_pnls, num_wins, num_trades, max_drawdown):
         self.data['cumulative_strategy_returns'] = (1 + self.data['strategy_returns']).cumprod()
         self.data['cumulative_buy_hold'] = (1 + self.data['close'].pct_change()).cumprod()
@@ -867,11 +990,58 @@ class CryptoBacktest:
                 # full_path = os.path.join(self.save_dir, filename)
                 fig.write_html(filename)
 
-def set_df_with_missing_data(df):
+    def plot_weekly_results(self):
+        import matplotlib.pyplot as plt
+
+        with plot_io_lock:
+            df = self.data.copy()
+            # For weekly returns:
+            weekly = df.resample('W').last()
+            # Calculate weekly returns safely
+            weekly_returns = weekly[['cumulative_strategy_returns', 'cumulative_buy_hold']].pct_change()
+            # Replace any infinite values (division by zero issues) with NaN
+            weekly_returns.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+            # Create the weekly returns plot and save it as a file
+            fig_week, ax_week = plt.subplots(figsize=(14, 7))
+            weekly_returns.plot(kind='bar', ax=ax_week)
+            ax_week.set_title('Weekly Returns')
+            # Hide axis
+            ax_week.set_axis_off()
+            plt.tight_layout()
+
+            save_path = os.path.join(self.save_dir,
+                                     f'{self.id}_{self.symbol.replace("/", "_")}_{self.timeframe}_{self.ma_type}_{self.trend_type}_{self.stop_loss}_{self.trading_fee}_weekly_returns.png')
+            fig_week.savefig(save_path)  # Save the weekly returns chart to a file
+            plt.close(fig_week)
+
+            df = self.data.copy()
+            # For monthly returns:
+            monthly = df.resample('M').last()
+            # Calculate monthly returns safely
+            monthly_returns = monthly[['cumulative_strategy_returns', 'cumulative_buy_hold']].pct_change()
+            # Replace any infinite values with NaN
+            monthly_returns.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+            # Create the monthly returns plot and save it as a file
+            fig_month, ax_month = plt.subplots(figsize=(14, 7))
+            monthly_returns.plot(kind='bar', ax=ax_month)
+            ax_month.set_title('Monthly Returns')
+            ax_month.set_axis_off()
+            plt.tight_layout()
+
+            save_path = os.path.join(self.save_dir,
+                                     f'{self.id}_{self.symbol.replace("/", "_")}_{self.timeframe}_{self.ma_type}_{self.trend_type}_{self.stop_loss}_{self.trading_fee}_monthly_returns.png')
+            fig_month.savefig(save_path)  # Save the monthly returns chart to a file
+            plt.close(fig_month)
+
+            del df
+
+def set_df_with_missing_data(df, lst_trend):
     # Define your lists
     lst_STOP_LOSS = [0, 2]
     lst_FEES = [0, 0.04]
-    lst_TREND_TYPE = ["ICHIMOKU", "SAR", "TSI", "FISHER", "KALMAN", "PRICE_ACTION"]
+    lst_TREND_TYPE = lst_trend
 
     # This list will store all new rows
     rows_list = []
@@ -904,13 +1074,16 @@ file_io_lock_2 = threading.Lock()
 plot_io_lock = threading.Lock()
 
 # Define your per-parameter processing function
-def process_param(param, start_date, end_date, low_timeframe, high_timeframe, save_dir, input_data, file_io_lock):
+def process_param(param, start_date, end_date, low_timeframe, high_timeframe, save_dir, input_data, file_io_lock, vbt_plot):
     print(f"[process_param] ID={param['ID']} on thread {threading.current_thread().name}")
     # Unpack parameters from the param dictionary
     id = param["ID"]
     symbol = param["SYMBOL"]
     timeframe = param["TIMEFRAME"]
-    ma_type = param["MA_TYPE"]
+    try:
+        ma_type = param["MA_TYPE"]
+    except:
+        print("toto")
     trend_type = param["TREND_TYPE"]
     ZEMA_LEN_BUY = int(param["ZEMA_LEN_BUY"])
     ZEMA_LEN_SELL = int(param["ZEMA_LEN_SELL"])
@@ -947,18 +1120,23 @@ def process_param(param, start_date, end_date, low_timeframe, high_timeframe, sa
         params,
         trading_fee=FEES,
         initial_balance=10000,
-        stop_loss=STOP_LOSS
+        stop_loss=STOP_LOSS,
+        vbt_plot=vbt_plot
     )
 
-    REVERSE_MODE = False
-    with file_io_lock:
-        # Fetch and process data
-        backtest.fetch_data(data_attr='data', reverse=REVERSE_MODE)
-        # The condition below always evaluates to True because of "or True",
-        # so adjust it if necessary.
-        if STOP_LOSS != 0 or True:
-            backtest.fetch_data(data_attr='low_tf_data', reverse=REVERSE_MODE)
-        backtest.fetch_data(data_attr='high_tf_data', reverse=REVERSE_MODE)
+    BITHET_ONE_MONTH = False
+    if BITHET_ONE_MONTH:
+        backtest.fetch_data_biget()
+    else:
+        REVERSE_MODE = False
+        with file_io_lock:
+            # Fetch and process data
+            backtest.fetch_data(data_attr='data', reverse=REVERSE_MODE)
+            # The condition below always evaluates to True because of "or True",
+            # so adjust it if necessary.
+            if STOP_LOSS != 0 or True:
+                backtest.fetch_data(data_attr='low_tf_data', reverse=REVERSE_MODE)
+            backtest.fetch_data(data_attr='high_tf_data', reverse=REVERSE_MODE)
 
     # Apply indicators and perform backtests
     backtest.apply_indicator()
@@ -966,50 +1144,75 @@ def process_param(param, start_date, end_date, low_timeframe, high_timeframe, sa
     backtest.backtest_strategy()
     backtest.backtest_vbt_strategy()
 
-    # Plot results
-    backtest.plot_results()
-    # backtest.plot_pnl()
-    backtest.plot_vbt_results()
-
     # Retrieve and return metrics
     dct_stats = backtest.get_metrics()
+
+    # Plot results
+    if (float(dct_stats['M_CUMULATIVE_RETURN'].strip('%')) > 0 and float(dct_stats['M_CUMULATIVE_RETURN'].strip('%')) > float(dct_stats['M_BUY_HOLD_RETURN'].strip('%'))):
+        backtest.plot_weekly_results()
+        backtest.plot_results()
+        # backtest.plot_pnl()
+        backtest.plot_vbt_results()
 
     del backtest
     print("######################################################")
     return dct_stats
 
 def main():
-    MULTI_FROM_CSV = True
-    FINAL_SELECTION = False
 
-    if True:
-        end_date = datetime.utcnow().replace(tzinfo=timezone.utc)
+    lst_start_date = [
+        '2025-04-06T00:00:00Z'
+    ]
+
+    lst_start_date = [
+        '2024-01-01T00:00:00Z'
+    ]
+
+    lst_param_strategy = []
+
+    lst_start_date = [
+        '2025-03-01T00:00:00Z'
+    ]
+
+    lst_start_date = [
+        '2025-03-01T00:00:00Z'
+    ]
+
+    lst_start_date = [
+        '2024-01-01T00:00:00Z',
+        '2025-03-01T00:00:00Z',
+        '2025-02-01T00:00:00Z',
+        '2025-01-01T00:00:00Z',
+        '2024-12-17T00:00:00Z',
+        '2025-01-20T00:00:00Z',
+        '2024-03-13T00:00:00Z'
+    ]
+
+    lst_start_date = [
+        '2025-03-13T00:00:00Z'
+    ]
+
+    NOW = True
+    if not NOW:
+        end = "2025-04-08"
+        end_date = datetime(2025, 4, 8, tzinfo=timezone.utc)
+        str_end_date = datetime(2025, 4, 8, tzinfo=timezone.utc).strftime("%Y-%m-%d")
     else:
-        end_date_str = "2025-02-02 18:21:45.707833"
-        nd_date_str = "2025-02-07 13:06:22.392898+00:00"
-        # Convert the string to a datetime object
-        end_date = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S.%f")
+        now_date = datetime.now(timezone.utc)
+        str_now_date = now_date.strftime("%Y-%m-%d")
 
-    if FINAL_SELECTION:
-        start_date = '2025-01-01T00:00:00Z'
-        # start_date = '2024-01-01T00:00:00Z'
+        end_date = now_date
+        str_end_date = str_now_date
+
+    for start_date in lst_start_date:
+        str_start_date = datetime.fromisoformat(start_date.replace("Z", "+00:00")).strftime("%Y-%m-%d")
+
         print("start date: ", start_date)
         print("end date: ", end_date)
-    else:
-        start_date = '2024-01-01T00:00:00Z'
-        print("start date: ", start_date)
-        print("end date: ", end_date)
+        low_timeframe = '1m'
+        high_timeframe = '1h'
 
-    low_timeframe = '1m'
-    high_timeframe = '1h'
-
-    if MULTI_FROM_CSV:
-        if FINAL_SELECTION:
-            working_directory = "./test_multi_trend_selection"
-        else:
-            working_directory = "./test_multi_trend_reverse"
-
-        working_directory = "./test_multi_trend_selection"
+        working_directory = "./test_multi_trend_selection_test_7"
 
         input_file_csv = "input_data_excel.csv"
         input_file_csv_2 = "input_data_full.csv"
@@ -1017,202 +1220,184 @@ def main():
         output_file_csv_tmp = "output_data_full_test_tmp.csv"
         save_dir = "result_test"
 
-        # Join the directory and file name to form the full path
-        file_path = os.path.join(working_directory, input_file_csv)
-        file_path_2 = os.path.join(working_directory, input_file_csv_2)
-        save_dir = os.path.join(working_directory, save_dir)
-        file_path_output = os.path.join(save_dir, output_file_csv)
-        file_path_output_tmp = os.path.join(save_dir, output_file_csv_tmp)
+        result_directory = r"\result_test" + f"_{str_start_date}_{str_end_date}"
+        directory_path = working_directory + result_directory
 
-        # Check if the file exists
-        if os.path.exists(file_path):
-            print(f"File exists at: {file_path}")
-        else:
-            print(f"File does not exist at: {file_path}")
+        param_strategy = {
+            "start_date": start_date,
+            "end_date" : end_date,
+            "low_timeframe": low_timeframe,
+            "high_timeframe": high_timeframe,
+            "working_directory" : working_directory,
+            "input_file_csv": input_file_csv,
+            "input_file_csv_2": input_file_csv_2,
+            "output_file_csv": output_file_csv,
+            "output_file_csv_tmp": output_file_csv_tmp,
+            "save_dir": directory_path,
+            "vbt_plot": True
+        }
+        lst_param_strategy.append(param_strategy)
 
-        lock = threading.Lock()
-        if False:
-            df_input_data = utils.read_csv_thread_safe(file_path, lock)
-            # df_input_data = set_df_with_missing_data(df_input_data)
-            # df_input_data = df_input_data.sample(frac=1, random_state=42).reset_index(drop=True)
-            df_input_data.to_csv(file_path_2)
+    for param in lst_param_strategy:
+        run_strategy(param)
 
-            new_excel_path = utils.add_exel_before_csv(file_path_2)
-            convert_csv_for_excel(file_path_2, new_excel_path)
-        else:
-            df_input_data = utils.read_csv_thread_safe(file_path, lock)
+def run_strategy(param_strategy):
+    start_date = param_strategy.get("start_date")
+    end_date = param_strategy.get("end_date")
+    low_timeframe = param_strategy.get("low_timeframe")
+    high_timeframe = param_strategy.get("high_timeframe")
+    working_directory = param_strategy.get("working_directory")
+    input_file_csv = param_strategy.get("input_file_csv")
+    input_file_csv_2 = param_strategy.get("input_file_csv_2")
+    output_file_csv = param_strategy.get("output_file_csv")
+    output_file_csv_tmp = param_strategy.get("output_file_csv_tmp")
+    save_dir = param_strategy.get("save_dir")
+    directory_path = save_dir
+    vbt_plot = param_strategy.get("vbt_plot")
 
-            df_input_data = set_df_with_missing_data(df_input_data)
-            df_input_data = df_input_data.sample(frac=1, random_state=42).reset_index(drop=True)
-            df_input_data = utils.drop_zero_fees(df_input_data)
-            df_input_data.to_csv(file_path_2)
+    # Join the directory and file name to form the full path
+    file_path = os.path.join(working_directory, input_file_csv)
+    file_path_2 = os.path.join(working_directory, input_file_csv_2)
+    # save_dir = os.path.join(working_directory, save_dir)
+    file_path_output = os.path.join(save_dir, output_file_csv)
+    file_path_output_tmp = os.path.join(save_dir, output_file_csv_tmp)
 
-            new_excel_path = utils.add_exel_before_csv(file_path_2)
-            convert_csv_for_excel(file_path_2, new_excel_path)
-
-        if False:
-            df_input_data = df_input_data.head(1)  # For test
-            # df_input_data = df_input_data[df_input_data['ID'] == 2]
-
-        if True: # Filter
-            directory_path = r"C:\Users\INTRADE\PycharmProjects\Analysis\ObelixParam\test_multi_trend_selection\result_test"
-            working_directory += working_directory + r"\result_test"
-
-            print("total to perform: ", len(df_input_data))
-            # Get the list of prefixes
-            id_list = utils.get_numeric_prefixes(directory_path)
-            id_list = list(map(int, id_list))
-            print("total already performed: ", len(id_list))
-            df_input_data = utils.drop_rows_by_id(df_input_data, id_list)
-            print("remaining to perform: ", len(df_input_data))
-
-
-        lst_params = []
-        for _, row in df_input_data.iterrows():
-            # Convert the row to a dictionary with column names as keys
-            param = row.to_dict()
-            lst_params.append(param)
-
-        print("nb combination: ", len(df_input_data))
-        # Control whether to use multithreading or sequential execution
-        multi_threading = True  # Set to False for sequential execution
-
-        # Set the maximum number of threads to run concurrently
-        max_threads = 4
-
-        lst_stats = []  # This will store the metrics from each backtest
-
-        if multi_threading:
-            print("multithreading is on: ", max_threads)
-            # Use ThreadPoolExecutor with a limit on the maximum number of threads
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
-                # Submit tasks: pass all required parameters to process_param
-                futures = [
-                    executor.submit(
-                        process_param,
-                        param,
-                        start_date,
-                        end_date,
-                        low_timeframe,
-                        high_timeframe,
-                        save_dir,
-                        input_data,
-                        file_io_lock
-                    )
-                    for param in lst_params  # lst_params should be defined with your parameters
-                ]
-                # Retrieve results as they complete
-                for future in concurrent.futures.as_completed(futures):
-                    try:
-                        result = future.result()
-                        with file_io_lock_2:
-                            lst_stats.append(result)
-                            df = pd.DataFrame(lst_stats)
-
-                            success = False
-                            attempt = 0
-                            max_attempts = 5  # Number of times to try before giving up
-                            while not success and attempt < max_attempts:
-                                try:
-                                    df.to_csv(file_path_output_tmp)
-                                    success = True
-                                    print("File saved successfully.")
-                                except Exception as e:
-                                    attempt += 1
-                                    print(f"Attempt {attempt} failed with error: {e}")
-
-                            new_excel_path = utils.add_exel_before_csv(file_path_output_tmp)
-                            success = False
-                            attempt = 0
-                            max_attempts = 5  # Number of times to try before giving up
-                            while not success and attempt < max_attempts:
-                                try:
-                                    convert_csv_for_excel(file_path_output_tmp, new_excel_path)
-                                    success = True
-                                    print("File saved successfully.")
-                                except Exception as e:
-                                    attempt += 1
-                                    print(f"Attempt {attempt} failed with error: {e}")
-
-                    except Exception as exc:
-                        print(f"Exception occurred: {exc}")
-        else:
-            # Process parameters sequentially
-            for param in lst_params:
-                result = process_param(param, start_date, end_date, low_timeframe, high_timeframe, save_dir, input_data, file_io_lock)
-                lst_stats.append(result)
-
-        # Save the collected statistics to a CSV file
-        df = pd.DataFrame(lst_stats)
-        df.to_csv(file_path_output)
-
-        # Convert CSV for Excel if needed
-        new_excel_path = utils.add_exel_before_csv(file_path_output)
-        convert_csv_for_excel(file_path_output, new_excel_path)
-
+    # Check if the file exists
+    if os.path.exists(file_path):
+        print(f"File exists at: {file_path}")
     else:
-        test_1h = False
-        test_5m = True
-        if test_1h:
-            timeframe = '1h'
-            ma_type = "TEMA"
-            HIGH_OFFSET = float(1.002)
-            LOW_OFFSET = float(1)
-            ZEMA_LEN_BUY = 30
-            ZEMA_LEN_SELL = 90
-            SSL_ATR_PERIOD = 10
-        elif test_5m:
-            timeframe = '5m'
-            ma_type = "ALMA"
-            HIGH_OFFSET = float(1.004)
-            LOW_OFFSET = float(1)
-            ZEMA_LEN_BUY = 50
-            ZEMA_LEN_SELL = 90
-            SSL_ATR_PERIOD = 10
+        print(f"File does not exist at: {file_path}")
 
-        STOP_LOSS = 0.0
-        FEES = 0.0
-        # FEES = 0.04
+    lock = threading.Lock()
+    if False:
+        df_input_data = utils.read_csv_thread_safe(file_path, lock)
+        # df_input_data = set_df_with_missing_data(df_input_data, lst_trend)
+        # df_input_data = df_input_data.sample(frac=1, random_state=42).reset_index(drop=True)
+        df_input_data.to_csv(file_path_2)
 
-        trend_type = "ICHOMOKU"
-        trend_type = "SAR"
-        trend_type = "SAR"
-        trend_type = "TSI"
-        trend_type = "FISHER"
-        trend_type = "KALMAN"
-        trend_type = "PRICE_ACTION"
+        new_excel_path = utils.add_exel_before_csv(file_path_2)
+        convert_csv_for_excel(file_path_2, new_excel_path)
+    else:
+        df_input_data = utils.read_csv_thread_safe(file_path, lock)
+        # lst_trend = ["ICHIMOKU", "SAR", "TSI", "FISHER", "KALMAN", "PRICE_ACTION"]
+        lst_trend = ["PRICE_ACTION"]
+        df_input_data = set_df_with_missing_data(df_input_data, lst_trend)
+        df_input_data = df_input_data.sample(frac=1, random_state=42).reset_index(drop=True)
+        df_input_data = utils.drop_zero_fees(df_input_data)
 
-        low_timeframe = '1m'
-        high_timeframe = '1h'
-        save_dir = "test_5m"
+        FILTER_ID = True
+        FILTER_SYMBOL = False
+        FILTER_INDICATOR = True
+        if FILTER_ID:
+            lst_ids = [65, 69, 73, 75, 77]
+            df_input_data = utils.keep_lst_ids(df_input_data, lst_ids)
+        if FILTER_SYMBOL:
+            lst_ids = ["ETHUSDT"]
+            df_input_data = utils.keep_lst_symbols(df_input_data, lst_ids)
+        if FILTER_INDICATOR:
+            lst_ids = ["HMA"]
+            df_input_data = utils.keep_lst_indicators(df_input_data, lst_ids)
 
-        params = {'zema_len_buy': ZEMA_LEN_BUY, 'zema_len_sell': ZEMA_LEN_SELL, 'low_offset': LOW_OFFSET,
-                  'high_offset': HIGH_OFFSET,
-                  'ssl_atr_period': SSL_ATR_PERIOD,
-                  'ichimoku_params': input_data.ichimoku_params
-                  }
+        # df_input_data["SYMBOL"].iloc[0] = "BTCUSDT"
 
-        backtest = CryptoBacktest("1", 'BTC/USDT', start_date, end_date, timeframe, low_timeframe, high_timeframe, save_dir, ma_type, trend_type, params,
-                                  trading_fee=FEES, initial_balance=10000, stop_loss=STOP_LOSS, print_all=True)
+        # df_input_data.to_csv(file_path_2)
 
-        # Fetch data for the default timeframe and store it in self.data
-        backtest.fetch_data(data_attr='data')
+        new_excel_path = utils.add_exel_before_csv(file_path_2)
+        convert_csv_for_excel(file_path_2, new_excel_path)
 
-        if STOP_LOSS != 0 \
-                or True:
-            # Fetch data for the low timeframe and store it in self.low_tf_data
-            backtest.fetch_data(data_attr='low_tf_data')
+    if False:
+        df_input_data = df_input_data.head(1)  # For test
+        # df_input_data = df_input_data[df_input_data['ID'] == 2]
 
-        # Fetch data for the high timeframe and store it in self.high_tf_data
-        backtest.fetch_data(data_attr='high_tf_data')
+    if True: # Filter
+        print("total to perform: ", len(df_input_data))
+        # Get the list of prefixes
+        id_list = utils.get_numeric_prefixes(directory_path)
+        id_list = list(map(int, id_list))
+        print("total already performed: ", len(id_list))
+        df_input_data = utils.drop_rows_by_id(df_input_data, id_list)
+        print("remaining to perform: ", len(df_input_data))
 
-        backtest.apply_indicator()
-        backtest.apply_high_tf_indicator()
-        backtest.backtest_strategy()
-        print("######################################################")
-        backtest.backtest_vbt_strategy()
-        backtest.plot_results()
-        backtest.plot_vbt_results()
+
+    lst_params = []
+    for _, row in df_input_data.iterrows():
+        # Convert the row to a dictionary with column names as keys
+        param = row.to_dict()
+        lst_params.append(param)
+
+    print("nb combination: ", len(df_input_data))
+    # Control whether to use multithreading or sequential execution
+
+    # Set the maximum number of threads to run concurrently
+    max_threads = 4
+
+    lst_stats = []  # This will store the metrics from each backtest
+
+    print("multithreading is on: ", max_threads)
+    # Use ThreadPoolExecutor with a limit on the maximum number of threads
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
+        # Submit tasks: pass all required parameters to process_param
+        futures = [
+            executor.submit(
+                process_param,
+                param,
+                start_date,
+                end_date,
+                low_timeframe,
+                high_timeframe,
+                save_dir,
+                input_data,
+                file_io_lock,
+                vbt_plot
+            )
+            for param in lst_params  # lst_params should be defined with your parameters
+        ]
+        # Retrieve results as they complete
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                result = future.result()
+                with file_io_lock_2:
+                    lst_stats.append(result)
+                    df = pd.DataFrame(lst_stats)
+
+                    success = False
+                    attempt = 0
+                    max_attempts = 5  # Number of times to try before giving up
+                    while not success and attempt < max_attempts:
+                        try:
+                            df.to_csv(file_path_output_tmp)
+                            success = True
+                            print("File saved successfully.")
+                        except Exception as e:
+                            attempt += 1
+                            print(f"Attempt {attempt} failed with error: {e}")
+
+                    new_excel_path = utils.add_exel_before_csv(file_path_output_tmp)
+                    success = False
+                    attempt = 0
+                    max_attempts = 5  # Number of times to try before giving up
+                    while not success and attempt < max_attempts:
+                        try:
+                            convert_csv_for_excel(file_path_output_tmp, new_excel_path)
+                            success = True
+                            print("File saved successfully.")
+                        except Exception as e:
+                            attempt += 1
+                            print(f"Attempt {attempt} failed with error: {e}")
+
+            except Exception as exc:
+                print(f"Exception occurred: {exc}")
+
+    # Save the collected statistics to a CSV file
+    df = pd.DataFrame(lst_stats)
+    df.to_csv(file_path_output)
+
+    # Convert CSV for Excel if needed
+    new_excel_path = utils.add_exel_before_csv(file_path_output)
+    convert_csv_for_excel(file_path_output, new_excel_path)
+
+    df_global_traces.to_csv("df_global_traces.csv")
+
 
 
 if __name__ == "__main__":

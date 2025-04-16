@@ -251,9 +251,23 @@ class CryptoBacktest:
         # Round the end date to the nearest timeframe and format it
         self.str_end_date = self.end_date.strftime('%Y-%m-%dT%H:%M:%SZ')
 
+        self.start_date = self.end_date - relativedelta(months=1)
+
+        # Convert start_date to a formatted string.
+        # Change the format string as needed (here it's set to YYYY-MM-DD).
+        self.str_start_date = self.start_date.strftime("%Y-%m-%d")
+
         self.data = get_candle_dataframe(self.symbol, "1m")
         self.low_tf_data = self.data.copy()
+        filename = f"bitget_1m_{self.symbol}_{self.str_start_date}_{self.str_end_date.split('T')[0]}.csv"
+        self.low_tf_data.to_csv(self.data_dir + filename)
+
         self.high_tf_data = get_candle_dataframe(self.symbol, "1H")
+        filename = f"bitget_1H_{self.symbol}_{self.str_start_date}_{self.str_end_date.split('T')[0]}.csv"
+        self.high_tf_data.to_csv(self.data_dir + filename)
+
+
+
 
     def fetch_data(self, data_attr, reverse=False):
         """
@@ -1124,7 +1138,7 @@ def process_param(param, start_date, end_date, low_timeframe, high_timeframe, sa
         vbt_plot=vbt_plot
     )
 
-    BITHET_ONE_MONTH = False
+    BITHET_ONE_MONTH = True
     if BITHET_ONE_MONTH:
         backtest.fetch_data_biget()
     else:
@@ -1300,7 +1314,7 @@ def run_strategy(param_strategy):
 
         # df_input_data["SYMBOL"].iloc[0] = "BTCUSDT"
 
-        # df_input_data.to_csv(file_path_2)
+        df_input_data.to_csv(file_path_2)
 
         new_excel_path = utils.add_exel_before_csv(file_path_2)
         convert_csv_for_excel(file_path_2, new_excel_path)

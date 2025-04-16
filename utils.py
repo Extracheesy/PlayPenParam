@@ -227,6 +227,12 @@ def drop_zero_fees(df):
 
     return filtered_df
 
+def drop_not_price_action(df):
+
+    filtered_df = df[df["TREND_TYPE"] != "PRICE_ACTION"].copy()
+
+    return filtered_df
+
 
 def keep_lst_ids(df, lst):
     """

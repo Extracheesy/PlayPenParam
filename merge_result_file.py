@@ -10,7 +10,7 @@ from convert_to_xcel import convert_csv_for_excel
 def main():
     result_dir = 'result'
 
-    directory = r"C:\Users\INTRADE\PycharmProjects\Analysis\ObelixParam\test_multi_trend_selection_test_6"
+    directory = r"C:\Users\INTRADE\PycharmProjects\Analysis\ObelixParam\test_multi_trend_selection_test_7"
     os.chdir(directory)
 
     base_dir = os.getcwd()

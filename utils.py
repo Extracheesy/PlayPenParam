@@ -161,6 +161,7 @@ def read_csv_thread_safe(file_path, lock):
     Uses a lock to ensure thread-safe reading.
     """
     delimiter = detect_delimiter(file_path)
+    delimiter = ";"
     with lock:
         if delimiter:
             df = pd.read_csv(file_path, delimiter=delimiter)
@@ -270,3 +271,7 @@ def keep_lst_indicators(df, lst):
     if not lst:  # Check if the list is empty
         return df
     return df[df["MA_TYPE"].isin(lst)]
+
+
+def keep_lst_indicators_bitget(df, keep_bitget=True):
+    return df[df["BITGET_DATA"]==keep_bitget]
